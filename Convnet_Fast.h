@@ -56,25 +56,17 @@ private:
     double mMargin=0.2;
 };
 
-/************************CLASS STEREO DATASET**************************/
-class StereoDataset: public torch::data::datasets
-{
-public:
-
-
-private:
-}
-;
 /**********************************************************************/
 class ConvNet_FastImpl : public torch::nn::Module {
  public:
-    explicit ConvNet_FastImpl(int64_t kern):mkernel(kern){};
+    explicit ConvNet_FastImpl(int64_t kern, int64_t nbHidden):mkernel(kern),mnbHidden(nbHidden){};
     torch::Tensor forward_once(torch::Tensor x);
     void createModel(int64_t featureMaps, int64_t NbHiddenLayers, int64_t n_input_plane,int64_t ks);
     std::vector<torch::Tensor> forward(torch::Tensor x_left, torch::Tensor x_right);
 
  private:
-   int mkernel;
+   int64_t mkernel;
+   int64_t mnbHidden;
    // add hidden layers to sequential staff
     torch::nn::Sequential mFast;
 };

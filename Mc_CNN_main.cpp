@@ -9,6 +9,7 @@
 #include "Convnet_Fast.h"
 #include "cv.h"
 #include "Census.cuh"
+#include "StereoDataset.h"
 
 
 using namespace std;
@@ -364,14 +365,30 @@ void FuncMandatory_Infer(Mandatory_Inference p)
 
 //************************THE NETWORK IN PYTORCH************************
 
+
+
 // Create both architectures FAST and SLOW 
+/**********************************************************************/
+int getWindowSize(ConvNet_Fast Net)
+{
+  int window=1;  const auto& p : net.parameters()
+  for (auto module =Net.begin();module!=Net.end();module++)
+  {
+     window+=module.kernel_size()-1;    // am not sure that this works  !!!!!!!!!
+   }
+  /*for (const auto& p : Net.parameters())
+  {
+     window+=p.key()["Kernel"]-1;
+   }*/
+   return window;
+} 
+/**********************************************************************/
 
-
-
+/**********************************************************************/
 int main(int argc, char **argv) {
    torch::manual_seed(42);
   
-   assert(argc>1);
+   assert(argc>5);  // Dataset architecture Train|Test|Predict Datapath netpath 
   
   if (strcmp(argv[1],"SAT")==0)
       {
@@ -552,59 +569,65 @@ int main(int argc, char **argv) {
      std::cout<<"  pas d'arcitecture connue  "<<endl;
   }
   
+  //********************Reading Training and Testing Data**************\\
+  // Get Tensors names : have been saved before for data preparation
+  std::string Datapath=argv[4];
+  std::string X0_left_Dataset=Datapath.append("x0.bin");
+  std::string X1_right_Dataset=Datapath.append("x1.bin");
+  std::string dispnoc_Data=Datapath.append("dispnoc.bin");
+  std::string metadata_File=Datapath.append("metadata.bin");
+  std::string tr_File=Datapath.append("tr.bin");
+  std::string te_File=Datapath.append("te.bin");
+  std::string nnztr_File=Datapath.append("nnz_tr.bin");
+  std::string nnzte_File=Datapath.append("nnz_te.bin");
+  std::string nnzte_File=Datapath.append("nnz_te.bin");
   
+  /********************************************************************/
   // Device
-  printArgs();
   auto cuda_available = torch::cuda::is_available();
   torch::Device device(cuda_available ? torch::kCUDA : torch::kCPU);
   std::cout << (cuda_available ? "CUDA available. Training on GPU." : "Training on CPU.") << '\n';
-  
-  
-  //********************Reading Training and Testing Data**************\\
-  
-  
-  //********************Model Call FAST ARCHITECTURE********************\\
+  /********************************************************************/ 
+  printArgs();
+  /********************************************************************/
+  /************************ MODEL ARCHITECTURE    *********************/
+  /********************************************************************/
   
   ConvNet_Fast model(3);
   model->createModel(fm,l1,n_input_plane,ks);
   model->to(device);
+  // Get window size for the patch size 
+  int Ws = getWindowSize(model);
   
+  std::cout<<"=========> Loading the stored stereo dataset "<<std::endl;
   
+  StereoDataset IARPADataset(
+             X0_left_Dataset,X1_right_Dataset,dispnoc_Data,metadata_File,tr_File,te_File,nnztr_File,nnzte_File, 
+             n_input_plane, Ws,trans, v_trans, hscale, scale, hflip,vflip,brightness,true1, false1,false2,rotate, 
+             contrast,d_hscale, d_hshear, d_vtrans, d_brightness, d_contrast,d_rotate);
+             
+  std::cout<<"=========> The stereo dataset has been successfully loaded "<<std::endl;
+
   // Hyper parameters
   const size_t num_epochs = 5;
   const double learning_rate = 0.001;
 
-  const std::string MNIST_data_path = "../../../../data/mnist/";
-
-  // MNIST dataset
-  auto train_dataset = torch::data::datasets::MNIST(MNIST_data_path)
-      .map(torch::data::transforms::Normalize<>(0.1307, 0.3081))
-      .map(torch::data::transforms::Stack<>());
-
-  // Number of samples in the training set
-  auto num_train_samples = train_dataset.size().value();
-
-  auto test_dataset = torch::data::datasets::MNIST(MNIST_data_path, torch::data::datasets::MNIST::Mode::kTest)
-      .map(torch::data::transforms::Normalize<>(0.1307, 0.3081))
-      .map(torch::data::transforms::Stack<>());
-
-  // Number of samples in the testset
-  auto num_test_samples = test_dataset.size().value();
-
+/**********************************************************************/
   // Data loader
   auto train_loader = torch::data::make_data_loader<torch::data::samplers::RandomSampler>(
-      std::move(train_dataset), batch_size);
+      std::move(IARPADataset), bs);
 
   auto test_loader = torch::data::make_data_loader<torch::data::samplers::SequentialSampler>(
-      std::move(test_dataset), batch_size);
+      std::move(IARPADataset), bs);
+/**********************************************************************/
 
   // Optimizer
-  torch::optim::Adam optimizer(model->parameters(), torch::optim::AdamOptions(lr));
+  torch::optim::Adam optimizer(model->parameters(), torch::optim::AdamOptions(learning_rate));
 
   // Set floating point output precision
   std::cout << std::fixed << std::setprecision(4);
 
-  std::cout << "Training...\n";
+  std::cout << "=========> Training...\n";
 
   // Train the model
   for (size_t epoch = 0; epoch != num_epochs; ++epoch) {

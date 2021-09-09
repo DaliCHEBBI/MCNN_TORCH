@@ -85,6 +85,9 @@ class StereoDataset : public torch::data::Dataset<StereoDataset>
               
         {
         };
+/**********************************************************************/
+/**********************READING SAVED TENSORS***************************/
+/**********************************************************************/
         // From file methods 
         torch::Tensor fromfile(char *fname)
         {
@@ -151,7 +154,6 @@ class StereoDataset : public torch::data::Dataset<StereoDataset>
            auto x_out = x.reshape(dim2);
            return x_out;
         }
-
 /**********************************************************************/
         // Override the get method to load custom data.
         torch::data::Example<> get(size_t index) override {
@@ -264,7 +266,8 @@ class StereoDataset : public torch::data::Dataset<StereoDataset>
             DoublePairOfPatches.index_put_({3},PatchDestination);
             
             
-            torch::Tensor label_tensor = torch::full({1}, label);
+            //torch::Tensor label_tensor = torch::full({1}, label);
+            torch::Tensor label_tensor = torch::Tensor({1,0});
 
             return {DoublePairOfPatches, label_tensor};
         };
@@ -303,6 +306,10 @@ class StereoDataset : public torch::data::Dataset<StereoDataset>
         // Override the size method to infer the size of the data set.
         torch::optional<size_t> size() const override {
 
-            return csv_.size();
+            return this->mnnztr.numel();
         };
+/**********************************************************************/
+/********************CHECKING TILE LIMITS FOR PADDING******************/
+/**********************************************************************/
+        
 };
