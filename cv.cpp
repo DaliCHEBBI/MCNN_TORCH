@@ -25,15 +25,17 @@ void warp_affine(torch::Tensor *srcT, torch::Tensor *dstT, torch::Tensor *matT)
     cv::Mat srcMat,dstMat;
     if (src_c==3)
     {
-    srcMat=cv::Mat(src_w,src_h, CV_8UC3, src);
-    dstMat=cv::Mat(dst_w,dst_h, CV_8UC3, dst);
+    srcMat=cv::Mat(src_w,src_h, CV_32FC3, src);
+    dstMat=cv::Mat(dst_w,dst_h, CV_32FC3, dst);
     }
     else
     {
-    srcMat=cv::Mat(src_w,src_h, CV_8UC1, src);
-    dstMat=cv::Mat(dst_w,dst_h, CV_8UC1, dst);
+    srcMat=cv::Mat(src_w,src_h, CV_32FC1, src);
+    dstMat=cv::Mat(dst_w,dst_h, CV_32FC1, dst);
     }
-    cv::warpAffine(srcMat, dstMat, warp_mat,cv::Size(1024,1024),CV_INTER_CUBIC,cv::BORDER_CONSTANT, 1); 
+    cv::warpAffine(srcMat, dstMat, warp_mat,cv::Size(dst_w,dst_h),CV_INTER_CUBIC,cv::BORDER_CONSTANT, 1); 
+    //cv::imshow("image warped ",dstMat);
+    //cv::waitKey(0);
 }
 
 

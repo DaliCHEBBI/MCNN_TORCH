@@ -84,13 +84,24 @@ std::vector<torch::Tensor> ConvNet_FastImpl::forward(torch::Tensor x_left, torch
    return outall;
 }
 /**********************************************************************/
-torch::Tensor SeameseLoss::forward_on(torch::Tensor x1,torch::Tensor x2, int label)
+torch::Tensor SiameseLoss::forward_on_contrastive (torch::Tensor x1,torch::Tensor x2, int label)
 {
 	//torch::nn::CosineSimilarity CosineSim=torch::nn::CosineSimilarity();// to check later !!!!!!!!!
 	torch::Tensor similarity=F::cosine_similarity(x1, x2, F::CosineSimilarityFuncOptions().dim(1));
 	torch::Tensor clmp=at::mul(at::sub(similarity,this->getMargin()),-1);
-	torch::Tensor loss_c=at::mean((1-label)*at::pow(2,similarity)+(label)*at::pow(2,at::clamp(clmp,0.0)));
+	torch::Tensor loss_c=at::mean(at::mul(at::pow(2,similarity),1-label)+at::mul(at::pow(2,at::clamp(clmp,0.0)),label));
 	return loss_c;
+}
+
+torch::Tensor SiameseLoss::forward_on_hinge (torch::Tensor x_positive, torch::Tensor x_negative, double margin)
+{
+    torch::Tensor similarity_plus=F::cosine_similarity(x_positive.index({0}), x_positive.index({1}), F::CosineSimilarityFuncOptions().dim(1));
+    torch::Tensor similarity_moins=F::cosine_similarity(x_negative.index({0}), x_negative.index({1}), F::CosineSimilarityFuncOptions().dim(1));
+    auto metric=at::sub(at::add(similarity_moins,margin),similarity_plus.accessor<float,1>()[0]);
+    auto maxvalue=max(0, metric.accessor<float,1>()[0]);
+    
+    torch::Tensor loss_hinge=torch::Tensor({maxvalue});
+    return loss_hinge;
 }
 /**********************************************************************/
 
@@ -601,7 +612,7 @@ int main(int argc, char **argv) {
   
   std::cout<<"=========> Loading the stored stereo dataset "<<std::endl;
   
-  StereoDataset IARPADataset(
+  auto IARPADataset = StereoDataset(
              X0_left_Dataset,X1_right_Dataset,dispnoc_Data,metadata_File,tr_File,te_File,nnztr_File,nnzte_File, 
              n_input_plane, Ws,trans, v_trans, hscale, scale, hflip,vflip,brightness,true1, false1,false2,rotate, 
              contrast,d_hscale, d_hshear, d_vtrans, d_brightness, d_contrast,d_rotate);
@@ -628,6 +639,8 @@ int main(int argc, char **argv) {
   std::cout << std::fixed << std::setprecision(4);
 
   std::cout << "=========> Training...\n";
+  
+  int num_train_samples=IARPADataset.size().value();
 
   // Train the model
   for (size_t epoch = 0; epoch != num_epochs; ++epoch) {
@@ -636,18 +649,24 @@ int main(int argc, char **argv) {
       size_t num_correct = 0;
       for (auto& batch : *train_loader) {
           // Transfer images and target labels to device
-          auto data = batch.data.to(device);
+          auto data   = batch.data.to(device);
+          
           auto target = batch.target.to(device);
 
           // Forward pass
           auto output = model->forward(data);
+          
+          
 
           //Define the loss metric 
-          lossF=SeameseLoss(0.2);
-
+          lossF=SiameseLoss(0.2);
+          
+          // Backward pass and optimize
+          optimizer.zero_grad();
+          
           // Calculate loss
           //auto loss = torch::nn::functional::cross_entropy(output, target);
-          auto loss=lossF.forward_on(output.at(0),output.at(1),target);    // See later !!!!!!!!!!!!!
+          auto loss=lossF.forward_on_hinge(output.at(0),output.at(1),target);    // See later !!!!!!!!!!!!!
           // Update running loss
           running_loss += loss.item<double>() * data.size(0);              // See later !!!!!!!!!!!!!
 
@@ -656,9 +675,7 @@ int main(int argc, char **argv) {
 
           // Update number of correctly classified samples
           num_correct += prediction.eq(target).sum().item<int64_t>();
-
-          // Backward pass and optimize
-          optimizer.zero_grad();
+          
           lossF.backward();
           optimizer.step();
       }

@@ -38,19 +38,20 @@ private:
 /**********************************************************************/
 /*                HINGE LOSS FUNCTION                                 */
 /**********************************************************************/
-class SeameseLoss: public torch::nn::Module 
+class SiameseLoss: public torch::nn::Module 
 {
 public:
-      SeameseLoss (double margin):mMargin(margin){};
-      torch::Tensor forward_on (torch::Tensor x1, torch::Tensor x2, int label);
+      SiameseLoss (double margin):mMargin(margin){};
+      torch::Tensor forward_on_contrastive (torch::Tensor x1, torch::Tensor x2, int label);
+      torch::Tensor forward_on_hinge (torch::Tensor x1, torch::Tensor x2, double margin);
       double getMargin()
       {
 		  return this->mMargin;
 	   };
 	  void setMargin (double Margin)
 	  {
-		  this->mMargin=Margin;
-	   };
+         this->mMargin=Margin;
+	  };
 	   
 private:
     double mMargin=0.2;
