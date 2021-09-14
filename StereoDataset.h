@@ -293,7 +293,7 @@ class StereoDataset : public torch::data::Dataset<StereoDataset>
             torch::Tensor tile_left  = this-> mX0_left_Dataset.index({img-1});    //!!!!!!!!!!!!!!!
             torch::Tensor tile_right = this->mX1_right_Dataset.index({img-1});    //!!!!!!!!!!!!!!!
             
-            std::cout<<tile_left.sizes()<<std::endl;
+            //std::cout<<tile_left.sizes()<<std::endl;
             // Random transforms applied in order to get patches
             
             /*************************************************************************************************************/
@@ -383,27 +383,27 @@ class StereoDataset : public torch::data::Dataset<StereoDataset>
             float contrast_ = contrast * contrast_add;
             //std::cout<<"  check points ==================================="<<std::endl;
             // Make 2 pairs of patches: 1. True and 1. False matches with data augmentation 
-            torch::Tensor DoublePairOfPatches=torch::empty({4, mninput_plane,mws,mws},torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCPU));
+            auto DoublePairOfPatches=torch::empty({4, mninput_plane,mws,mws},torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCPU));
             torch::Tensor PatchDestination =torch::empty({mninput_plane,mws,mws},torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCPU));
             Make_Patch(tile_left, PatchDestination,dim3,dim4,scale,phi,transT,hshear,brightness,contrast);
             //put into DoublePairOfPatches 
             DoublePairOfPatches.index_put_({0},PatchDestination);
             //std::cout<<DoublePairOfPatches.index({0});
-            Make_Patch(tile_left, PatchDestination,dim3,dim4,scale_,phi_,trans_,hshear_,brightness_,contrast_);
+            Make_Patch(tile_right, PatchDestination,dim3,dim4-d+d+(float)d_pos,scale_,phi_,trans_,hshear_,brightness_,contrast_);
             //put into DoublePairOfPatches 
             DoublePairOfPatches.index_put_({1},PatchDestination);
             //std::cout<<DoublePairOfPatches.index({1});
-            Make_Patch(tile_right, PatchDestination,dim3,dim4,scale,phi,transT,hshear,brightness,contrast);
+            Make_Patch(tile_left, PatchDestination,dim3,dim4,scale,phi,transT,hshear,brightness,contrast);
             //put into DoublePairOfPatches 
             DoublePairOfPatches.index_put_({2},PatchDestination);
             //std::cout<<DoublePairOfPatches.index({2});
-            Make_Patch(tile_right, PatchDestination,dim3,dim4,scale_,phi_,trans_,hshear_,brightness_,contrast_);
+            Make_Patch(tile_right, PatchDestination,dim3,dim4-d+(float)d_neg,scale_,phi_,trans_,hshear_,brightness_,contrast_);
             //put into DoublePairOfPatches 
             DoublePairOfPatches.index_put_({3},PatchDestination);
             //std::cout<<DoublePairOfPatches.index({3});
             
             //torch::Tensor label_tensor = torch::full({1}, label);
-            torch::Tensor label_tensor = torch::tensor({1,0});
+            auto label_tensor = torch::tensor({1});
 
             return {DoublePairOfPatches, label_tensor};
         };
@@ -447,6 +447,7 @@ class StereoDataset : public torch::data::Dataset<StereoDataset>
             //std::cout<<" mnnztr size of data "<<
             return this->mnnztr.size(0);
         };
+
 /**********************************************************************/
 /********************CHECKING TILE LIMITS FOR PADDING******************/
 /**********************************************************************/

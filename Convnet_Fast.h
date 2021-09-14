@@ -2,21 +2,58 @@
 #include <torch/torch.h>
 namespace F = torch::nn::functional;
 
+
+
+
+
+/**********************************************************************/
+class NormL2:public torch::nn::Module{
+	
+public:
+      NormL2()
+      {};
+      torch::Tensor forward (torch::Tensor input)
+      {
+		  //torch::Tensor out=F::normalize(input, F::NormalizeFuncOptions().p(2).dim(1).eps(1e-8));
+		  //std::cout<<"effect of normalization "<<out.index({0})<<std::endl;
+          return F::normalize(input, F::NormalizeFuncOptions().p(2).dim(1).eps(1e-8));
+	   };
+};
+
+/**********************************************************************/
 /**********************************************************************/
 class StereoJoin1 : public torch::nn::Module {
 public:
      StereoJoin1 ()
      {
 	 };
-      // constructeur
-     // objects
-     //Members functions 
-     std::vector <torch::Tensor> slice_input(torch::Tensor input); // the vector contains input_L, et input_R
-     torch::Tensor updateOutput(torch::Tensor input);
-     void updateGradInput(torch::Tensor input, torch::Tensor gradOutput);
-private:
-     torch::Tensor gradInput; // to check later
-     torch::Tensor tmp;
+     std::vector <torch::Tensor> slice_input(torch::Tensor input) // the vector contains input_L, et input_R
+     {
+        std::vector <torch::Tensor> out;
+        torch::Tensor input_L = torch::empty({input.size(0)/2, input.size(1),input.size(2),input.size(3)},torch::TensorOptions().dtype(torch::kFloat32));
+        torch::Tensor input_R = torch::empty({input.size(0)/2, input.size(1),input.size(2),input.size(3)},torch::TensorOptions().dtype(torch::kFloat32));
+        // fill tensors left and right 
+        for (int i=0;i<input.size(0)/2;i++)
+        {
+			//std::cout<<"sizes for checkoing "<<input.index({2*i}).sizes()<<std::endl;
+           input_L.index_put_({i},input.index({2*i}));
+           input_R.index_put_({i},input.index({2*i+1}));
+         }
+        return {input_L,input_R};
+	  };
+     /****updateOutput*****/
+     
+     torch::Tensor forward (torch::Tensor input)
+     {
+		//std::cout<<"sizes for checkoing "<<input.sizes()<<std::endl;
+       std::vector <torch::Tensor> out = this->slice_input(input);
+       torch::Tensor tmp=torch::empty({input.size(0)/2, input.size(1),input.size(2),input.size(3)},torch::TensorOptions().dtype(torch::kFloat32));
+       tmp.reshape_as(out.at(0));     // changing private attributes
+       tmp=out.at(0).mul(out.at(1));  //multilying both left and right tensors
+       return torch::sum(tmp,1);            // Summing for each row 
+     };
+     //torch::Tensor updateOutput(torch::Tensor input);
+     //void updateGradInput(torch::Tensor input, torch::Tensor gradOutput);
 	};
 /**********************************************************************/
 
@@ -42,8 +79,9 @@ class SiameseLoss: public torch::nn::Module
 {
 public:
       SiameseLoss (double margin):mMargin(margin){};
-      torch::Tensor forward_on_contrastive (torch::Tensor x1, torch::Tensor x2, int label);
-      torch::Tensor forward_on_hinge (torch::Tensor x1, torch::Tensor x2, double margin);
+      //torch::Tensor forward_on_contrastive (torch::Tensor x1, torch::Tensor x2, int label);
+      //torch::Tensor forward_on_hinge (torch::Tensor x);
+      //torch::Tensor forward(torch::Tensor x);
       double getMargin()
       {
 		  return this->mMargin;
@@ -52,7 +90,42 @@ public:
 	  {
          this->mMargin=Margin;
 	  };
-	   
+      /**********************************************************************/
+      torch::Tensor forward_on_contrastive (torch::Tensor x1,torch::Tensor x2, int label)
+      {
+      	//torch::nn::CosineSimilarity CosineSim=torch::nn::CosineSimilarity();// to check later !!!!!!!!!
+      	torch::Tensor similarity=F::cosine_similarity(x1, x2, F::CosineSimilarityFuncOptions().dim(1));
+      	torch::Tensor clmp=at::mul(at::sub(similarity,this->getMargin()),-1);
+      	torch::Tensor loss_c=at::mean(at::mul(at::pow(2,similarity),1-label)+at::mul(at::pow(2,at::clamp(clmp,0.0)),label));
+      	return loss_c;
+      };
+      
+      /*torch::Tensor SiameseLoss::forward_on_hinge (torch::Tensor Sample)
+      {
+          torch::Tensor similarity_plus=F::cosine_similarity(Sample.index({0}), Sample.index({1}), F::CosineSimilarityFuncOptions().dim(1));
+          torch::Tensor similarity_moins=F::cosine_similarity(Sample.index({2}), Sample.index({3}), F::CosineSimilarityFuncOptions().dim(1));
+          auto metric=at::sub(at::add(similarity_moins,this->getMargin()),similarity_plus.accessor<float,1>()[0]);
+          auto maxvalue=fmax(0, metric.accessor<float,1>()[0]);
+          
+          torch::Tensor loss_hinge=torch::tensor({maxvalue});
+          return loss_hinge;
+      };*/
+      
+      
+      torch::Tensor forward(torch::Tensor input, torch::Tensor target)
+      {
+          // get hinge loss for each couple of data 
+          torch::Tensor hingeLoss=torch::empty({input.size(0)/4},torch::kFloat32);
+          for (int i =0;i<input.size(0)/4;i++)
+          {
+             torch::Tensor similarity_plus=F::cosine_similarity(input.index({4*i}), input.index({4*i+1}), F::CosineSimilarityFuncOptions().dim(1));
+             torch::Tensor similarity_moins=F::cosine_similarity(input.index({4*i+2}), input.index({4*i+3}), F::CosineSimilarityFuncOptions().dim(1));
+             auto metric=at::sub(at::add(similarity_moins,this->getMargin()),similarity_plus.accessor<float,1>()[0]);
+             auto maxvalue=fmax(0, metric.accessor<float,1>()[0]);
+             hingeLoss.index_put_({i},maxvalue);
+          }
+          return hingeLoss;
+       } ;
 private:
     double mMargin=0.2;
 };
@@ -61,9 +134,15 @@ private:
 class ConvNet_FastImpl : public torch::nn::Module {
  public:
     explicit ConvNet_FastImpl(int64_t kern, int64_t nbHidden):mkernel(kern),mnbHidden(nbHidden){};
-    torch::Tensor forward_once(torch::Tensor x);
+    torch::Tensor forward(torch::Tensor x);
     void createModel(int64_t featureMaps, int64_t NbHiddenLayers, int64_t n_input_plane,int64_t ks);
-    std::vector<torch::Tensor> forward(torch::Tensor x_left, torch::Tensor x_right);
+    //torch::Tensor forward_twice(torch::Tensor x);
+    torch::nn::Sequential getFastSequential()
+    {
+		return this->mFast;
+	};
+	int64_t getKernelSize()
+	{ return this->mkernel;};
 
  private:
    int64_t mkernel;
