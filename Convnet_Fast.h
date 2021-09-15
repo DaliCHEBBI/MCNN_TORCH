@@ -75,8 +75,7 @@ private:
 /**********************************************************************/
 /*                HINGE LOSS FUNCTION                                 */
 /**********************************************************************/
-class SiameseLoss: public torch::nn::Module 
-{
+class SiameseLoss: public torch::nn::Module {
 public:
       SiameseLoss (double margin):mMargin(margin){};
       //torch::Tensor forward_on_contrastive (torch::Tensor x1, torch::Tensor x2, int label);
@@ -114,18 +113,31 @@ public:
       
       torch::Tensor forward(torch::Tensor input, torch::Tensor target)
       {
-          // get hinge loss for each couple of data 
-          torch::Tensor hingeLoss=torch::empty({input.size(0)/4},torch::kFloat32);
-          for (int i =0;i<input.size(0)/4;i++)
-          {
-             torch::Tensor similarity_plus=F::cosine_similarity(input.index({4*i}), input.index({4*i+1}), F::CosineSimilarityFuncOptions().dim(1));
-             torch::Tensor similarity_moins=F::cosine_similarity(input.index({4*i+2}), input.index({4*i+3}), F::CosineSimilarityFuncOptions().dim(1));
-             auto metric=at::sub(at::add(similarity_moins,this->getMargin()),similarity_plus.accessor<float,1>()[0]);
-             auto maxvalue=fmax(0, metric.accessor<float,1>()[0]);
-             hingeLoss.index_put_({i},maxvalue);
-          }
-          return hingeLoss;
+        // get hinge loss for each couple of data 
+        torch::Tensor pair=torch::empty({input.size(0)/2},torch::TensorOptions().dtype(torch::kInt32));
+        torch::Tensor Impair=torch::empty({input.size(0)/2},torch::TensorOptions().dtype(torch::kInt32));
+        
+        for (int i=0;i<input.size(0)/2;i++)
+        {
+			pair.index_put_({i},2*i);
+			Impair.index_put_({i},2*i+1);
+		}
+        torch::Tensor similarity_plus=torch::index_select(input,0,pair);
+        torch::Tensor similarity_minus=torch::index_select(input,0,Impair);
+        similarity_plus=torch::squeeze(similarity_plus);
+        similarity_minus=torch::squeeze(similarity_minus);
+        //std::cout<<"similarity_plus  "<<similarity_plus.sizes()<<std::endl;
+        //std::cout<<"similarity_minus  "<<similarity_minus.sizes()<<std::endl;
+        auto metric=similarity_minus.add(this->getMargin()).sub(similarity_plus);
+        //std::cout<<"metric      "<<metric.sizes()<<std::endl;
+        //auto metric=at::sub(at::add(similarity_minus,this->getMargin()),similarity_plus);
+        metric=torch::fmax(metric,torch::zeros({input.size(0)/2}));
+        //std::cout<<"metric      "<<metric.sizes()<<std::endl;
+        metric=torch::mean(metric,0,1);
+        //std::cout<<"metric      "<<metric.sizes()<<std::endl;
+        return metric;
        } ;
+       
 private:
     double mMargin=0.2;
 };

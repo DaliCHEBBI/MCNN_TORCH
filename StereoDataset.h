@@ -1,6 +1,5 @@
 #pragma once
 #include <vector>
-#include <tuple>
 #include <torch/torch.h>
 #include <opencv2/opencv.hpp>
 #include <ATen/ATen.h>
