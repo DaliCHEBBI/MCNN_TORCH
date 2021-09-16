@@ -147,6 +147,7 @@ class ConvNet_FastImpl : public torch::nn::Module {
  public:
     explicit ConvNet_FastImpl(int64_t kern, int64_t nbHidden):mkernel(kern),mnbHidden(nbHidden){};
     torch::Tensor forward(torch::Tensor x);
+    torch::Tensor forward_but_Last(torch::Tensor x);
     void createModel(int64_t featureMaps, int64_t NbHiddenLayers, int64_t n_input_plane,int64_t ks);
     //torch::Tensor forward_twice(torch::Tensor x);
     torch::nn::Sequential getFastSequential()
