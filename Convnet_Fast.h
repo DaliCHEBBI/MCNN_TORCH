@@ -56,21 +56,6 @@ public:
      //void updateGradInput(torch::Tensor input, torch::Tensor gradOutput);
 	};
 /**********************************************************************/
-
-/*class StereoJoin : public torch::nn::Module 
-
-{
-public:
-     StereoJoin (int64_t disp_max):mdisp_max_(disp_max){}; // constructeur
-     // objects
-     //Members functions 
-     torch::Tensor updateOutput (torch::Tensor input);
-private:
-	int mdisp_max_;
-	int mdirection =-1;
-	torch::Tensor output_L;
-	};
-*/
 /**********************************************************************/
 /**********************************************************************/
 /*                HINGE LOSS FUNCTION                                 */
@@ -146,24 +131,69 @@ private:
 class ConvNet_FastImpl : public torch::nn::Module {
  public:
     explicit ConvNet_FastImpl(int64_t kern, int64_t nbHidden):mkernel(kern),mnbHidden(nbHidden){};
-    torch::Tensor forward(torch::Tensor x);
-    torch::Tensor forward_but_Last(torch::Tensor x);
-    void createModel(int64_t featureMaps, int64_t NbHiddenLayers, int64_t n_input_plane,int64_t ks);
-    //torch::Tensor forward_twice(torch::Tensor x);
+/**********************************************************************/
+    void createModel(int64_t mfeatureMaps, int64_t mNbHiddenLayers, int64_t mn_input_plane,int64_t mks)
+    {
+        for (auto i=0; i<mNbHiddenLayers-1;i++)
+        {
+            if (i==0) // Initial image: it will take the number of channels of the patch$
+            {
+    		  mFast->push_back(std::string("conv")+std::to_string(i),torch::nn::Conv2d(torch::nn::Conv2dOptions(mn_input_plane, mfeatureMaps, mks).stride(1).padding(0)));  // we ll see types of padding later
+              mFast->push_back(std::string("ReLU")+std::to_string(i),torch::nn::ReLU());
+    		}
+    		else 
+    		{
+    		mFast->push_back(std::string("conv")+std::to_string(i),torch::nn::Conv2d(torch::nn::Conv2dOptions(mfeatureMaps, mfeatureMaps, mks).stride(1).padding(0)));
+            mFast->push_back(std::string("ReLU")+std::to_string(i),torch::nn::ReLU());
+    	    }
+    	}
+    	mFast->push_back(std::string("conv")+std::to_string(mNbHiddenLayers-1),torch::nn::Conv2d(torch::nn::Conv2dOptions(mfeatureMaps, mfeatureMaps, mks).stride(1).padding(0)));
+    	
+        mFast->push_back("NormL2", NormL2());
+        mFast->push_back("StereoJoin",StereoJoin1());
+    };
+/**********************************************************************/
+
+    torch::Tensor forward(torch::Tensor x)   
+    {
+    	auto& model_ref = *mFast;
+        for (auto module : model_ref)
+        {
+    		x=module.forward(x);
+    	}
+    	return x;
+    };
+
+/***********************************************************************/
+    torch::Tensor forward_but_Last(torch::Tensor x)   
+    {
+    
+        size_t Sz=this->getFastSequential()->size();
+        size_t cc=0;
+    	auto& model_ref = *mFast;
+        for (auto module : model_ref)
+        {
+    		if (cc<Sz-1)
+    		{x=module.forward(x);}
+    		cc++;
+    	}
+    	return x;
+    };
+/***********************************************************************/
     torch::nn::Sequential getFastSequential()
     {
 		return this->mFast;
 	};
+/***********************************************************************/
 	int64_t getKernelSize()
 	{ return this->mkernel;};
-
+/***********************************************************************/
  private:
    int64_t mkernel;
    int64_t mnbHidden;
    // add hidden layers to sequential staff
     torch::nn::Sequential mFast;
 };
-
 
 TORCH_MODULE(ConvNet_Fast);
 

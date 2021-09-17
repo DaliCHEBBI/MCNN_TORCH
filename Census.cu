@@ -7,10 +7,17 @@
 #include <torch/torch.h>
 #include "Census.cuh"
 
-#define DISP_MAX 256
 
+#define TB 128
 
-#define COLOR_DIFF(x, i, j) (abs(x[i] - x[j]))
+/**********checking error after kernel has been initiated *************/
+
+void checkCudaError(void) {
+	cudaError_t status = cudaPeekAtLastError();
+	if (status != cudaSuccess) {
+		cudaGetErrorString(status);
+	}
+}
 
 /***********************************************************************/
 __device__ void sort(float *x, int n)
@@ -197,6 +204,20 @@ __global__ void cross(float *x0, float *out, int size, int dim2, int dim3, int L
 	}
 }
 /***********************************************************************/
+int Cross(torch::Tensor x0, torch::Tensor out, int L1, float tau1)
+{
+	cross<<<(out.numel() - 1) / TB + 1, TB>>>(
+		x0.data_ptr<float>(),
+		out.data_ptr<float>(),
+		out.numel(),
+		out.size(2),
+		out.size(3),
+		L1, tau1);
+	checkCudaError();
+	return 0;
+}
+
+/***********************************************************************/
 __global__ void cbca(float *x0c, float *x1c, float *vol, float *out, int size, int dim2, int dim3, int direction)
 {
 	int id = blockIdx.x * blockDim.x + threadIdx.x;
@@ -232,6 +253,23 @@ __global__ void cbca(float *x0c, float *x1c, float *vol, float *out, int size, i
 		}
 	}
 }
+/***********************************************************************/
+int CrBaCoAgg(torch::Tensor x0c, torch::Tensor x1c, torch::Tensor vol_in, torch::Tensor vol_out,  int direction)
+{
+	assert(direction == -1 or direction == 1);
+	cbca<<<(vol_out.numel() - 1) / TB + 1, TB>>>(
+		x0c.data_ptr<float>(),
+		x1c.data_ptr<float>(),
+		vol_in.data_ptr<float>(),
+		vol_out.data_ptr<float>(),
+		vol_out.numel(),
+		vol_out.size(2),
+		vol_out.size(3),
+		direction);
+	checkCudaError();
+	return 0;
+}
+
 /***********************************************************************/
 __global__ void sgm(float *x0, float *x1, float *vol, float *tmp, float *out, int dim1, int dim2, int dim3, float pi1, float pi2, float tau_so, float alpha1, float sgm_q1, float sgm_q2, int sgm_direction, int direction)
 {
@@ -416,6 +454,75 @@ template <int sgm_direction> __global__ void sgm2(float *x0, float *x1, float *i
 	tmp[d * size2 + blockIdx.x] = val;
 }
 /***********************************************************************/
+int sgm2(torch::Tensor x0, torch::Tensor x1, torch::Tensor input , torch::Tensor output, torch::Tensor tmp,
+     float pi1,float pi2, float tau_so, float alpha1, float sgm_q1, float sgm_q2, int direction
+        )
+{
+	int size1 = output.size(1)* output.size(3);
+	int size2 = output.size(2) * output.size(3);
+	int disp_max = output.size(3);
+
+	for (int step = 0; step < input.size(2); step++) {
+		sgm2<0><<<(size1 - 1) / disp_max + 1, disp_max>>>(
+			x0.data_ptr<float>(),
+			x1.data_ptr<float>(),
+			input.data_ptr<float>(),
+			output.data_ptr<float>(),
+			tmp.data_ptr<float>(),
+			pi1, pi2, tau_so, alpha1, sgm_q1, sgm_q2, direction,
+			input.size(1),
+			input.size(2),
+			input.size(3),
+			step);
+	}
+
+	for (int step = 0; step < input.size(2); step++) {
+		sgm2<1><<<(size1 - 1) / disp_max + 1, disp_max>>>(
+			x0.data_ptr<float>(),
+			x1.data_ptr<float>(),
+			input.data_ptr<float>(),
+			output.data_ptr<float>(),
+			tmp.data_ptr<float>(),
+			pi1, pi2, tau_so, alpha1, sgm_q1, sgm_q2, direction,
+			input.size(1),
+			input.size(2),
+			input.size(3),
+			step);
+	}
+
+	for (int step = 0; step < input.size(1); step++) {
+		sgm2<2><<<(size2 - 1) / disp_max + 1, disp_max>>>(
+			x0.data_ptr<float>(),
+			x1.data_ptr<float>(),
+			input.data_ptr<float>(),
+			output.data_ptr<float>(),
+			tmp.data_ptr<float>(),
+			pi1, pi2, tau_so, alpha1, sgm_q1, sgm_q2, direction,
+			input.size(1),
+			input.size(2),
+			input.size(3),
+			step);
+	}
+
+	for (int step = 0; step < input.size(1); step++) {
+		sgm2<3><<<(size2 - 1) / disp_max + 1, disp_max>>>(
+			x0.data_ptr<float>(),
+			x1.data_ptr<float>(),
+			input.data_ptr<float>(),
+			output.data_ptr<float>(),
+			tmp.data_ptr<float>(),
+			pi1, pi2, tau_so, alpha1, sgm_q1, sgm_q2, direction,
+			input.size(1),
+			input.size(2),
+			input.size(3),
+			step);
+	}
+
+	checkCudaError();
+	return 0;
+}
+
+/***********************************************************************/
 
 template <int sgm_direction> __global__ void sgm3(float *x0, float *x1, float *input, float *output, float pi1, float pi2, float tau_so, float alpha1, float sgm_q1, float sgm_q2, int direction, int size1, int size2, int size3, int step)
 {
@@ -532,6 +639,20 @@ __global__ void outlier_detection(float *d0, float *d1, float *outlier, int size
 }
 
 /***********************************************************************/
+int outlier_detection (torch::Tensor d0, torch::Tensor d1, torch::Tensor outlier, int disp_max)
+{
+	outlier_detection<<<(d0.numel() - 1) / TB + 1, TB>>>(
+		d0.data_ptr<float>(),
+		d1.data_ptr<float>(),
+		outlier.data_ptr<float>(),
+		d0.numel(),
+		d0.size(3),
+		disp_max);
+	checkCudaError();
+	return 0;
+}
+
+/***********************************************************************/
 #if 0
 
 __global__ void iterative_region_voting(float *d0, float *x0c, float *x1c, float *outlier, float *d0_out, float *outlier_out, int size, int dim2, int dim3, float tau_s, float tau_h, int disp_max)
@@ -643,6 +764,19 @@ __global__ void interpolate_mismatch(float *d0, float *outlier, float *out, int 
 	}
 }
 
+int interpolate_mismatch(torch::Tensor d0, torch::Tensor outlier, torch::Tensor out)
+{
+	interpolate_mismatch<<<(out.numel() - 1) / TB + 1, TB>>>(
+		d0.data_ptr<float>(),
+		outlier.data_ptr<float>(),
+		out.data_ptr<float>(),
+		out.numel() ,
+		out.size(2),
+		out.size(3));
+
+	checkCudaError();
+	return 1;
+}
 
 __global__ void interpolate_occlusion(float *d0, float *outlier, float *out, int size, int dim3)
 {
@@ -670,6 +804,19 @@ __global__ void interpolate_occlusion(float *d0, float *outlier, float *out, int
 			out[id] = d0[id];
 		}
 	}
+}
+
+int interpolate_occlusion(torch::Tensor d0, torch::Tensor outlier,torch::Tensor out)
+{
+	interpolate_occlusion<<<(out.numel() - 1) / TB + 1, TB>>>(
+		d0.data_ptr<float>(),
+		outlier.data_ptr<float>(),
+		out.data_ptr<float>(),
+		out.numel(),
+		out.size(3)
+	);
+	checkCudaError();
+	return 1;
 }
 
 
@@ -726,6 +873,19 @@ __global__ void subpixel_enchancement(float *d0, float *c2, float *out, int size
 	}
 }
 
+int subpixel_enchancement(torch::Tensor d0, torch::Tensor c2, torch::Tensor out, int disp_max) {
+
+	subpixel_enchancement<<<(out.numel() - 1) / TB + 1, TB>>>(
+		d0.data_ptr<float>(),
+		c2.data_ptr<float>(),
+		out.data_ptr<float>(),
+		out.numel(),
+		out.size(2)* out.size(3),
+		disp_max);
+	checkCudaError();
+	return 1;
+}
+
 __global__ void mean2d(float *img, float *kernel, float *out, int size, int kernel_radius, int dim2, int dim3, float alpha2)
 {
 	int id = blockIdx.x * blockDim.x + threadIdx.x;
@@ -748,6 +908,21 @@ __global__ void mean2d(float *img, float *kernel, float *out, int size, int kern
 	}
 }
 
+
+int mean2d(torch::Tensor img, torch::Tensor kernel, torch::Tensor out, float alpha2) {
+	assert(kernel.size(0) % 2 == 1);
+	mean2d<<<(out.numel() - 1) / TB + 1, TB>>>(
+		img.data_ptr<float>(),
+		kernel.data_ptr<float>(),
+		out.data_ptr<float>(),
+		out.numel(),
+		kernel.size(0) / 2,
+		out.size(2),
+		out.size(3),
+		alpha2);
+	checkCudaError();
+	return 1;
+}
 
 __global__ void Normalize_get_norm_(float *input, float *norm, int size1, int size23, int size023)
 {
@@ -847,7 +1022,7 @@ template <class Op> __global__ void Margin2_(float *input, float *tmp, float *gr
 }
 
 
-__global__ void StereoJoin_alternative_(float *input_L, float *input_R, float *output_L, float *output_R, int size1_input, int size1, int size3, int size23)
+__global__ void StereoJoin_(float *input_L, float *input_R, float *output_L, float *output_R, int size1_input, int size1, int size3, int size23)
 {
 	int id = blockIdx.x * blockDim.x + threadIdx.x;
 	if (id < size23) {
@@ -871,6 +1046,26 @@ __global__ void StereoJoin_alternative_(float *input_L, float *input_R, float *o
 	}
 }
 
+/************************************************************************/
+int StereoJoin(torch::Tensor input_L, torch::Tensor input_R, torch::Tensor output_L,torch::Tensor output_R)
+{
+	int size23 = output_L.size(1)*output_L.size(2);
+	int size1_input=input_L.size(0);
+	int size1  =output_L.size(0);
+	int size3  =output_L.size(2);
+	StereoJoin_<<<(size23 - 1) / TB + 1, TB>>>(
+		input_L.data_ptr<float>(),
+		input_R.data_ptr<float>(),
+		output_L.data_ptr<float>(),
+		output_R.data_ptr<float>(),
+		size1_input,
+		size1,
+		size3,
+		size23);
+	checkCudaError();
+	return 0;
+}
+/************************************************************************/
 
 __global__ void StereoL2R_(float *vol_L, float *vol_R, int size2, int size3, int size)
 {
@@ -937,7 +1132,20 @@ __global__ void median2d(float *img, float *out, int size, int dim2, int dim3, i
 	}
 }
 
-
+/***********************************************************************/
+int median2d(torch::Tensor img, torch::Tensor out, int kernel_size) {
+	assert(kernel_size % 2 == 1);
+	assert(kernel_size <= 11);
+	median2d<<<(out.numel() - 1) / TB + 1, TB>>>(
+		img.data_ptr<float>(),
+		out.data_ptr<float>(),
+		out.numel(),
+		out.size(2),
+		out.size(3),
+		kernel_size / 2);
+	checkCudaError();
+	return 1;
+}
 /***********************************************************************/
 void readPNG16(torch::Tensor *imgT, const char * fname)   // See later how to make it a Float Tensor 
 {

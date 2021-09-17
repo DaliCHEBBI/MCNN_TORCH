@@ -9,12 +9,14 @@
 #include <opencv/cv.h>
 #include <opencv/highgui.h>
 #include <opencv2/core.hpp>
+#include <cuda_runtime.h>
 #include "StereoDataset.h"
-//#include <cudnn.h>
 #include "Convnet_Fast.h"
 #include "cv.h"
-//#include "SampleCensus.cuh"
+#include "Census.cuh"
+
 namespace F = torch::nn::functional;
+
 
 
 //**********************************************************************
@@ -72,6 +74,7 @@ struct Options {
     int disp_max        = 392;
     int n_te            = 0;
     int n_input_plane   = 1;
+    int err_at          = 1;
 };
 /***********************SimilarityLearner *****************************/
 class SimilarityLearner
@@ -80,10 +83,11 @@ public:
 		SimilarityLearner()
 		{};
 		template <typename DataLoader> void  train (ConvNet_Fast Network, DataLoader& loader,
-		torch::optim::Optimizer& optimizer,size_t epoch,size_t data_size, int interval,torch::Device device);
-		template <typename DataLoader> void  test  (StereoDataset Dataset,ConvNet_Fast Network,size_t data_size, size_t batch_size, int interval, torch::Device device);
-		torch::Tensor predict(torch::Tensor X_batch, ConvNet_Fast Network,int ind,const int disp_max,torch::Device device, 
+		torch::optim::Optimizer& optimizer,size_t epoch,size_t data_size, int batch_size,int interval,torch::Device device);
+		template <typename DataLoader> void  test  (StereoDataset Dataset,ConvNet_Fast Network,size_t data_size, torch::Device device, Options opt);
+		torch::Tensor predict(torch::Tensor X_batch, ConvNet_Fast Network,int disp_max,torch::Device device, 
                               Options opt);
+
 		// All postprocessing Steps Stereo-Method
 		// Cross-based cost aggregation 
 		//***+++++void StereoJoin(torch::Tensor left, torch::Tensor right, torch::Tensor *VolLeft, torch::Tensor *volRight);
@@ -103,13 +107,14 @@ public:
         torch::Tensor gaussian(float blur_sigma);
         int GetWindowSize(ConvNet_Fast &Network);
         void Load_Network(ConvNet_Fast Network, std::string filename);
+        void fix_border(ConvNet_Fast net,torch::Tensor vol,int  direction);
 };
 
 
 /***********************************************************************/
 torch::Tensor SimilarityLearner::gaussian(float sigma)
 {
-   int kr=math.ceil(sigma/3);
+   int kr=ceil(sigma/3);
    int ks=kr*2+1;
    torch::Tensor K=torch::empty({ks,ks},torch::TensorOptions().dtype(torch::kFloat32));
    for (int i=0;i<ks;i++)
@@ -118,7 +123,7 @@ torch::Tensor SimilarityLearner::gaussian(float sigma)
         {
 			float y=i-kr;
 			float x=j-kr;
-			float val=math.exp(-(x * x + y * y) / (2 * sigma * sigma));
+			float val=exp(-(x * x + y * y) / (2 * sigma * sigma));
             K.index_put_({i,j},val);
         }
    }
@@ -127,14 +132,16 @@ torch::Tensor SimilarityLearner::gaussian(float sigma)
 /***********************************************************************/
 void SimilarityLearner::Save_Network(ConvNet_Fast Network, std::string filename)
 {
+	auto Fast=Network->getFastSequential();
 	// make sure the model ends with .pt to apply torch::load (model, "model.pt") later 
-	torch::save(Network->getFastSequential(), filename);
+	torch::save(Fast, filename.c_str());
 }
 /***********************************************************************/
 void SimilarityLearner::Load_Network(ConvNet_Fast Network, std::string filename)
 {
+	auto Fast=Network->getFastSequential();
 	// make sure the model ends with .pt to apply torch::load (model, "model.pt") later 
-	torch::load(Network->getFastSequential(), filename);
+	torch::load(Fast, filename.c_str());
 }
 /***********************************************************************/
 int SimilarityLearner::GetWindowSize(ConvNet_Fast &Network)
@@ -168,7 +175,7 @@ template <typename DataLoader> void SimilarityLearner::train(ConvNet_Fast Networ
 { 
    size_t index = 0;
    float Loss = 0, Acc = 0;
-   for (auto& batch : loader) 
+   for (auto& batch : *loader) 
    {
 	  int size2=batch.at(0).data.size(1);
 	  int size3=batch.at(0).data.size(2);
@@ -220,33 +227,35 @@ size_t data_size, torch::Device device,Options opt)
   float err_sum=0.0;
   torch::Tensor X_batch=torch::empty({2,1,opt.height,opt.width},torch::TensorOptions().dtype(torch::kFloat32).device(device));
   torch::Tensor pred_good, pred_bad, pred;  // SIZE IS TO BE DEFINED !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-  for (int i=0; i<Dataset->mte.size(0); i++) // the indexes of test images are in "te.bin" of dimension n 
+  for (int i=0; i<Dataset.mte.size(0); i++) // the indexes of test images are in "te.bin" of dimension n 
   {
-	int indexIm=(int)(Dataset->mte.accessor<float,1>()[i]);
-	torch::Tensor currentMetadata=mmetadata.index({indexIm});
+	int indexIm=(int)(Dataset.mte.accessor<float,1>()[i]);
+	torch::Tensor currentMetadata=Dataset.mmetadata.index({indexIm});
 	int img_heigth=(int)(currentMetadata.accessor<float,1>()[0]);
 	int img_width =(int)(currentMetadata.accessor<float,1>()[1]);
 	int id  = (int)(currentMetadata.accessor<float,1>()[2]);
-	X_batch.index_put_({0},Dataset->mX0_left_Dataset.index({indexIm})); // May ll add img_width to avoid "out_of_range"   ^^^^^^^^^
-	X_batch.index_put_({1},Dataset->mX1_right_Dataset.index({indexIm})); // May ll add img_width to avoid "out_of_range"  ^^^^^^^^^
+	X_batch.index_put_({0},Dataset.mX0_left_Dataset.index({indexIm})); // May ll add img_width to avoid "out_of_range"   ^^^^^^^^^
+	X_batch.index_put_({1},Dataset.mX1_right_Dataset.index({indexIm})); // May ll add img_width to avoid "out_of_range"  ^^^^^^^^^
 	//*******+++++++++ I think i need to synchronize with GPU Later 
-	pred=this->predict(X_batch,NetworkTe,disp_max,device,opt);   // This will bug no size defined for the tensor          ^^^^^^^^^
-	torch::Tensor actualGT=Dataset->mdispnoc.index({indexIm});            // May ll add img_width to avoid "out_of_range" ^^^^^^^^^
-	pred_good.resize_as(actualGT);
-	pred_bad.resize_as(actualGT);
-	torch::Tensor mask=torch::resize_as(actual).ne(actualGT,0);      // To check accordingly !!!!!!!!!!!!!!!!!!
-	actualGT.sub(pred).abs();                                        // To check accordingly !!!!!!!!!!!!!!!!!! 
-	pred_bad.gt(actualGT,opt.err_at).mul(mask);
-	pred_good.le(actualGT,opt.err_at).mul(mask);
+	pred=this->predict(X_batch,NetworkTe,opt.disp_max,device,opt);   // This will bug no size defined for the tensor          ^^^^^^^^^
+	torch::Tensor actualGT=Dataset.mdispnoc.index({indexIm});            // May ll add img_width to avoid "out_of_range" ^^^^^^^^^
+	at::resize_as_(pred_good,actualGT);
+	at::resize_as_(pred_bad,actualGT);
+	torch::Tensor mask;
+	at::resize_as_(mask,actualGT);
+	mask=actualGT.ne(0);              // To check accordingly !!!!!!!!!!!!!!!!!!
+	actualGT.sub(pred).abs();
+	pred_bad=actualGT.gt(opt.err_at).mul(mask);                                        // To check accordingly !!!!!!!!!!!!!!!!!! 
+	pred_good=actualGT.le(opt.err_at).mul(mask);
 	float err=pred_bad.sum()/mask.sum();
 	err_sum+=err;
-	std::cout<<<"  Error for the image id  "<<indexIm<<" is  : "<<err<<std::endl;
+	std::cout<<"  Error for the image id  "<<indexIm<<" is  : "<<err<<std::endl;
    }
-   std::cout<<" Overall error value for the test dataset is : "<<err_sum/Dataset->mte.size(0)<<std::endl;
+   std::cout<<" Overall error value for the test dataset is : "<<err_sum/Dataset.mte.size(0)<<std::endl;
 }
 /**********************************************************************/
 /************************INFERENCE OU STEREO_PREDICT*******************/
-torch::Tensor SimilarityLearner::predict(torch::Tensor X_batch, ConvNet_Fast Network,int ind,const int disp_max,torch::Device device, 
+torch::Tensor SimilarityLearner::predict(torch::Tensor X_batch, ConvNet_Fast Network,int disp_max,torch::Device device, 
                                          Options opt)
 {
    // CHECK X_batch shape !!!!!!!!!!!!!!!!!!!!
@@ -257,21 +266,21 @@ torch::Tensor SimilarityLearner::predict(torch::Tensor X_batch, ConvNet_Fast Net
    this->fix_border(Network,  vols.index({1}), 1);              // fix_border to implement !!!!!!!!!*
    
    /**********************/
-   torch::Tensor disp;
-   int mb_directions = {1,-1};
+   torch::Tensor disp,vol;
+   int mb_directions[2] = {1,-1};
    for (auto direction : mb_directions)
    {
-	  torch::Tensor vol = vols.index({direction == -1 and 0 or 1});
+	  vol = vols.index({direction == -1 and 0 or 1});
       //cross based cost aggregation CBCA
       torch::Tensor x0c=torch::empty({1, 4, vol.size(2), vol.size(3)},torch::TensorOptions().dtype(torch::kFloat32).device(device));
       torch::Tensor x1c=torch::empty({1, 4, vol.size(2), vol.size(3)},torch::TensorOptions().dtype(torch::kFloat32).device(device));
-      Cross(X_batch.index({0}), &x0c, opt.L1, opt.tau1); // Need to take care of Options struct creation !!!!!!!!!!!
-      Cross(X_batch.index({1}), &x1c, opt.L1, opt.tau1); // Need to take care of Options struct creation !!!!!!!!!!!
+      Cross(X_batch.index({0}), x0c, opt.L1, opt.tau1); 
+      Cross(X_batch.index({1}), x1c, opt.L1, opt.tau1); 
       torch::Tensor tmp_cbca = torch::empty({1, disp_max, vol.size(2), vol.size(3)},torch::TensorOptions().dtype(torch::kFloat32).device(device));
-      for  (int i=0,i<opt.cbca_i1,i++)
+      for  (int i=0;i<opt.cbca_i1;i++)
         {
          CrBaCoAgg(x0c,x1c,vol,tmp_cbca,direction);
-         vol.copy(tmp_cbca);
+         vol.copy_(tmp_cbca);
 	    }
 	  // SGM 
       vol = vol.transpose(1, 2).transpose(2, 3).clone(); // see it later !!!!!!!! it is absolutely  not going to work !!!!!!!!!
@@ -279,84 +288,46 @@ torch::Tensor SimilarityLearner::predict(torch::Tensor X_batch, ConvNet_Fast Net
       torch::Tensor tmp = torch::empty({vol.size(2), vol.size(3)},torch::TensorOptions().dtype(torch::kFloat32).device(device));
       for (int i=0;i<opt.sgm_i;i++)
         {
-             sgm2(x_batch[1], x_batch[2], vol, out, tmp, opt.pi1, opt.pi2, opt.tau_so,
+             sgm2(X_batch.index({0}), X_batch.index({1}), vol, out, tmp, opt.pi1, opt.pi2, opt.tau_so,
                 opt.alpha1, opt.sgm_q1, opt.sgm_q2, direction);
-             vol.copy(out).div(3);
+             vol.copy_(out).div(3);
 	    }
       vol.resize_({1, disp_max, X_batch.size(2), X_batch.size(3)});
-      vol.copy(out.transpose(2, 3).transpose(1, 2)).div(3);
+      vol.copy_(out.transpose(2, 3).transpose(1, 2)).div(3);
       
       //  ANOTHER CBCA 2
       for (int i=0;i<opt.cbca_i2;i++)
          {
            CrBaCoAgg(x0c, x1c, vol, tmp_cbca, direction);
-           vol.copy(tmp_cbca);
+           vol.copy_(tmp_cbca);
          }
        // Get the min disparity from the cost volume 
-      torch::Tensor d = torch::min(vol, 1);
+      std::tuple<torch::Tensor, torch::Tensor> d_Tpl = torch::min(vol,1);
+      torch::Tensor d=std::get<0>(d_Tpl);
+      at::reshape(d, {1, X_batch.size(2),X_batch.size(3)});
       disp.index_put_({direction == 1 and 0 or 1}, d.add(-1)); // Make sure it is correct and see what it gives as a result !!!!!!!!!!!! 
    }
       // All Subsequent steps that allow to handle filtering and interpolation 
       torch::Tensor outlier = torch::empty(disp.index({1}).sizes(),torch::TensorOptions().dtype(torch::kFloat32).device(device));
+      torch::Tensor out = torch::empty(disp.index({1}).sizes(),torch::TensorOptions().dtype(torch::kFloat32).device(device));
+      torch::Tensor out2 = torch::empty(disp.index({1}).sizes(),torch::TensorOptions().dtype(torch::kFloat32).device(device));
+      torch::Tensor out3 = torch::empty(disp.index({1}).sizes(),torch::TensorOptions().dtype(torch::kFloat32).device(device));
+      torch::Tensor out4 = torch::empty(disp.index({1}).sizes(),torch::TensorOptions().dtype(torch::kFloat32).device(device));
+      torch::Tensor out5 = torch::empty(disp.index({1}).sizes(),torch::TensorOptions().dtype(torch::kFloat32).device(device));
       outlier_detection(disp.index({1}), disp.index({0}), outlier, disp_max);
-      disp.index({1}) = interpolate_occlusion(disp.index({1}), outlier);       // CHECK THIS UP !!!!!!!!!!!!!!!
-      disp.index({1}) = interpolate_mismatch(disp.index({1}), outlier);        // CHECK THIS UP !!!!!!!!!!!!!!!
-      disp.index({1}) = subpixel_enchancement(disp.index({1}), vol, disp_max); // CHECK THIS UO !!!!!!!!!!!!!!!
-      disp.index({1}) = median2d(disp.index({1}), 5);                          // CHECK THIS UO !!!!!!!!!!!!!!!
-      disp.index({1}) = mean2d(disp.index({1}), gaussian(opt.blur_sigma), opt.blur_t);  // CHECK THIS UO !!!!!!!!!!!!!!!  GAUSSIAN
-   return disp.index({1});
+      interpolate_occlusion(disp.index({1}), outlier,out);       // CHECK THIS UP !!!!!!!!!!!!!!!
+      interpolate_mismatch(out, outlier,out2);                        // CHECK THIS UP !!!!!!!!!!!!!!!
+      subpixel_enchancement(out2, vol, out3, disp_max);                 // CHECK THIS UO !!!!!!!!!!!!!!!
+      median2d(out3,out4,5);                                          // CHECK THIS UO !!!!!!!!!!!!!!!
+      mean2d(out4, gaussian(opt.blur_sigma), out5, opt.blur_t);         // CHECK THIS UO !!!!!!!!!!!!!!!  GAUSSIAN
+   return out5;
 }
 /**********************************************************************/
-/**********************************************************************/
-void ConvNet_FastImpl::createModel(int64_t mfeatureMaps, int64_t mNbHiddenLayers, int64_t mn_input_plane,int64_t mks)
-{
-    for (auto i=0; i<mNbHiddenLayers-1;i++)
-    {
-        if (i==0) // Initial image: it will take the number of channels of the patch$
-        {
-		  mFast->push_back(torch::nn::Conv2d(torch::nn::Conv2dOptions(mn_input_plane, mfeatureMaps, mks).stride(1).padding(0)));  // we ll see types of padding later
-          mFast->push_back(torch::nn::ReLU());
-		}
-		else 
-		{
-		mFast->push_back(torch::nn::Conv2d(torch::nn::Conv2dOptions(mfeatureMaps, mfeatureMaps, mks).stride(1).padding(0)));
-        mFast->push_back(torch::nn::ReLU());
-	    }
-	}
-	mFast->push_back(torch::nn::Conv2d(torch::nn::Conv2dOptions(mfeatureMaps, mfeatureMaps, mks).stride(1).padding(0)));
-	
-    mFast->push_back(NormL2());
-    mFast->push_back(StereoJoin1());
-}
-/**********************************************************************/
-
-torch::Tensor ConvNet_FastImpl::forward(torch::Tensor x)   
-{
-	auto& model_ref = *mFast;
-    for (auto module : model_ref)
-    {
-		x=module.forward(x);
-	}
-	return x;
-}
-
-/***********************************************************************/
-
-torch::Tensor ConvNet_FastImpl::forward_but_Last(torch::Tensor x)   
-{
-	auto Fast=Network->getFastSequential();
-	for (int i=0;i<Fast->size()-1;i++)  // "But Last" which is "StereoJoin": it is inference we do not need to compare patches 
-    { 
-		x=Fast->at(i).forward(x);
-	}
-	return x;
-}
-
 /***********************************************************************/
 
 void printArgs(Options opt)
 {
-   std::cout<<opt.ks - 1 * l1 + 1<<"  arch_patch_size"<<std::endl;
+   std::cout<<opt.ks - 1 * opt.l1 + 1<<"  arch_patch_size"<<std::endl;
    std::cout<<opt.l1 <<"  arch1_num_layers"<<std::endl;;
    std::cout<<opt.fm <<"  arch1_num_feature_maps"<<std::endl;;
    std::cout<<opt.ks <<"  arch1_kernel_size"<<std::endl;;
@@ -370,9 +341,9 @@ void printArgs(Options opt)
    std::cout<<opt.cbca_i1<<"  cbca_num_iterations_1"<<std::endl;;
    std::cout<<opt.cbca_i2<<"  cbca_num_iterations_2"<<std::endl;;
    std::cout<<opt.pi1    <<"  sgm_P1"<<std::endl;;
-   std::cout<<opt.pi1 * pi2 <<"  sgm_P2"<<std::endl;;
+   std::cout<<opt.pi1 * opt.pi2 <<"  sgm_P2"<<std::endl;;
    std::cout<<opt.sgm_q1 <<"  sgm_Q1"<<std::endl;;
-   std::cout<<opt.sgm_q1 * sgm_q2<<"  sgm_Q2"<<std::endl;;
+   std::cout<<opt.sgm_q1 * opt.sgm_q2<<"  sgm_Q2"<<std::endl;;
    std::cout<<opt.alpha1 <<"  sgm_V"<<std::endl;;
    std::cout<<opt.tau_so <<"  sgm_intensity"<<std::endl;;
    std::cout<<opt.blur_sigma <<"  blur_sigma"<<std::endl;;
@@ -627,26 +598,29 @@ int main(int argc, char **argv) {
  {
     SimilarityLearn.train(Network, train_loader,optimizer, epoch,num_train_samples,opt.bs, 20,device); // 20 means a display of results in a periodic fashion
  }
- std::string NetworkName2Save=argv[5]+"/net_"+argv[1]+"_"+argv[2]+"_"+std::to_string(num_epochs)+".pt";
- SimilarityLearner.Save_Network(Network,NetworkName2Save);
+ 
+ std::string fileName=std::string(argv[5])+std::string("/net_")+std::string(argv[1])+std::string("_")+std::string(argv[2])+std::string("_")+std::to_string(num_epochs)+std::string(".pt");
+ SimilarityLearn.Save_Network(Network,fileName);
  
 /**********************************************************************/
  // Testing on an Unseen chunk of the IARPA DATASET 
- Network TestNetwork;
- SimilarityLearner.Load_Network(TestNetwork,argv[5]+"/net_"+argv[1]+"_"+argv[2]+"_"+std::to_string(num_epochs)+".pt");
+ 
+ std::string outputfileName=std::string(argv[5])+std::string("/net_")+std::string(argv[1])+std::string("_")+std::string(argv[2])+std::string("_")+std::to_string(num_epochs)+std::string(".pt");
+ 
+ ConvNet_Fast TestNetwork;
+ TestNetwork->createModel(opt.fm,opt.ll1,opt.n_input_plane,3);
+ //SimilarityLearn.Load_Network(TestNetwork,outputfileName);
  
  // Need to change padding to value 1 so output image will keep the same size as the input 
- auto Fast=Network->getFastSequential();
- for (int i=0;i<Fast->size()-1;i++)  // "But Last" which is "StereoJoin": it is inference we do not need to compare patches 
-    { 
-		if (i%2==0) // Conv2D 
-		{
-			Fast->at(i).options.padding=1; // Absolutely not sure  // see conv.h under "torch/csrc/api/include/torch/nn/options"
-		}
-	}
+ /*auto Fast=TestNetwork->getFastSequential(); 
+ size_t Sz=Fast->size();
+ size_t cc=0;
+ for (cc=0;cc<Sz;cc++)
+  {
+    if (Fast->named_children()[cc].key()==std::string("conv")+std::to_string(cc))
+        { Fast->named_children()[cc].options.padding=1;}
+  } */
  // Now Testing routine on test dataset : No need for a dataloader because we ll be using the whole pair of left and right tile 
- 
- 
  
 /**********************************************************************/
  return 0;

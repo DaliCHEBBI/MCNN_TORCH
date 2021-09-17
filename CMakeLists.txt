@@ -25,6 +25,9 @@ target_link_libraries(TestMainCpuGpu ${OPENCVPREFIX}/libopencv_features2d.so)
 target_link_libraries(TestMainCpuGpu ${OPENCVPREFIX}/libopencv_imgproc.so)
 set_property(TARGET TestMainCpuGpu PROPERTY CXX_STANDARD 14)
 
+
+
+
 # The following code block is suggested to be used on Windows.
 
 if (MSVC)
