@@ -63,9 +63,6 @@ public:
 class SiameseLoss: public torch::nn::Module {
 public:
       SiameseLoss (double margin):mMargin(margin){};
-      //torch::Tensor forward_on_contrastive (torch::Tensor x1, torch::Tensor x2, int label);
-      //torch::Tensor forward_on_hinge (torch::Tensor x);
-      //torch::Tensor forward(torch::Tensor x);
       double getMargin()
       {
 		  return this->mMargin;
@@ -84,18 +81,6 @@ public:
       	return loss_c;
       };
       
-      /*torch::Tensor SiameseLoss::forward_on_hinge (torch::Tensor Sample)
-      {
-          torch::Tensor similarity_plus=F::cosine_similarity(Sample.index({0}), Sample.index({1}), F::CosineSimilarityFuncOptions().dim(1));
-          torch::Tensor similarity_moins=F::cosine_similarity(Sample.index({2}), Sample.index({3}), F::CosineSimilarityFuncOptions().dim(1));
-          auto metric=at::sub(at::add(similarity_moins,this->getMargin()),similarity_plus.accessor<float,1>()[0]);
-          auto maxvalue=fmax(0, metric.accessor<float,1>()[0]);
-          
-          torch::Tensor loss_hinge=torch::tensor({maxvalue});
-          return loss_hinge;
-      };*/
-      
-      
       torch::Tensor forward(torch::Tensor input, torch::Tensor target)
       {
         // get hinge loss for each couple of data 
@@ -111,15 +96,9 @@ public:
         torch::Tensor similarity_minus=torch::index_select(input,0,Impair);
         similarity_plus=torch::squeeze(similarity_plus);
         similarity_minus=torch::squeeze(similarity_minus);
-        //std::cout<<"similarity_plus  "<<similarity_plus.sizes()<<std::endl;
-        //std::cout<<"similarity_minus  "<<similarity_minus.sizes()<<std::endl;
         auto metric=similarity_minus.add(this->getMargin()).sub(similarity_plus);
-        //std::cout<<"metric      "<<metric.sizes()<<std::endl;
-        //auto metric=at::sub(at::add(similarity_minus,this->getMargin()),similarity_plus);
         metric=torch::fmax(metric,torch::zeros({input.size(0)/2}));
-        //std::cout<<"metric      "<<metric.sizes()<<std::endl;
         metric=torch::mean(metric,0,1);
-        //std::cout<<"metric      "<<metric.sizes()<<std::endl;
         return metric;
        } ;
        
@@ -129,8 +108,9 @@ private:
 
 /**********************************************************************/
 class ConvNet_FastImpl : public torch::nn::Module {
- public:
-    explicit ConvNet_FastImpl(int64_t kern, int64_t nbHidden):mkernel(kern),mnbHidden(nbHidden){};
+public:
+      ConvNet_FastImpl(int64_t kern, int64_t nbHidden):mkernel(kern),mnbHidden(nbHidden)
+       { };
 /**********************************************************************/
     void createModel(int64_t mfeatureMaps, int64_t mNbHiddenLayers, int64_t mn_input_plane,int64_t mks)
     {
@@ -151,7 +131,7 @@ class ConvNet_FastImpl : public torch::nn::Module {
     	
         mFast->push_back("NormL2", NormL2());
         mFast->push_back("StereoJoin",StereoJoin1());
-    };
+    }
 /**********************************************************************/
 
     torch::Tensor forward(torch::Tensor x)   
@@ -162,7 +142,7 @@ class ConvNet_FastImpl : public torch::nn::Module {
     		x=module.forward(x);
     	}
     	return x;
-    };
+    }
 
 /***********************************************************************/
     torch::Tensor forward_but_Last(torch::Tensor x)   
@@ -178,21 +158,21 @@ class ConvNet_FastImpl : public torch::nn::Module {
     		cc++;
     	}
     	return x;
-    };
+    }
 /***********************************************************************/
     torch::nn::Sequential getFastSequential()
     {
 		return this->mFast;
-	};
+	}
 /***********************************************************************/
 	int64_t getKernelSize()
-	{ return this->mkernel;};
+	{ return this->mkernel;}
 /***********************************************************************/
  private:
    int64_t mkernel;
    int64_t mnbHidden;
    // add hidden layers to sequential staff
-    torch::nn::Sequential mFast;
+   torch::nn::Sequential mFast;
 };
 
 TORCH_MODULE(ConvNet_Fast);

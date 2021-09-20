@@ -87,7 +87,6 @@ public:
 		template <typename DataLoader> void  test  (StereoDataset Dataset,ConvNet_Fast Network,size_t data_size, torch::Device device, Options opt);
 		torch::Tensor predict(torch::Tensor X_batch, ConvNet_Fast Network,int disp_max,torch::Device device, 
                               Options opt);
-
 		// All postprocessing Steps Stereo-Method
 		// Cross-based cost aggregation 
 		//***+++++void StereoJoin(torch::Tensor left, torch::Tensor right, torch::Tensor *VolLeft, torch::Tensor *volRight);
@@ -174,12 +173,17 @@ template <typename DataLoader> void SimilarityLearner::train(ConvNet_Fast Networ
     torch::optim::Optimizer& optimizer, size_t epoch,size_t data_size,int batch_size, int interval, torch::Device device)
 { 
    size_t index = 0;
-   float Loss = 0, Acc = 0;
+   float Loss = 0, err_tr=0;
+   int err_tr_count=0;
    for (auto& batch : *loader) 
    {
+	  //std::cout<<"indexes at batch   =========="<<std::endl;
+	if (batch.size()==batch_size/2)
+	 {
 	  int size2=batch.at(0).data.size(1);
 	  int size3=batch.at(0).data.size(2);
 	  int size4=batch.at(0).data.size(3);
+	   //std::cout<<"indexes at batch   ================="<<std::endl;
 	  torch::Tensor BatchData=torch::empty({2*batch_size, size2,size3,size4},torch::TensorOptions().dtype(torch::kFloat32).device(device));
 	  torch::Tensor BatchTarget=torch::empty({batch_size},torch::TensorOptions().dtype(torch::kInt32).device(device));
 	  for (int j=0;j<batch_size/2;j++)
@@ -191,29 +195,43 @@ template <typename DataLoader> void SimilarityLearner::train(ConvNet_Fast Networ
 		BatchTarget.index_put_({2*j},1);
 		BatchTarget.index_put_({2*j+1},0);
       }
+	   //std::cout<<"indexes at batch   ========================="<<std::endl;
       auto out=Network->forward(BatchData);
       // Use a SiameseLoss
       auto loss= SiameseLoss(0.2);
       auto outpt=loss.forward(out,BatchTarget);
+      //std::cout<<"output after forward to loss "<<outpt.sizes()<<std::endl;
       assert(!std::isnan(outpt.template item<float>()));
-      auto acc = outpt.argmax(1).eq(BatchTarget).sum();  //to see later !!!!!!!
+      //std::cout<<"out od netwok size and dimension "<<out.sizes()<<"target size "<<BatchTarget.sizes()<<std::endl;
+      
+      err_tr=outpt.accessor<float,1>()[0];
+      if (err_tr>=0 && err_tr<100)
+      {
+		  Loss+=err_tr;
+		  err_tr_count+=1;
+	  }
+	  else
+	  {
+		  std::cout<<"be careful divergence : Error ==> "<<err_tr<<std::endl;
+	  }
+      //auto acc = outpt.argmax(1).eq(BatchTarget).sum();  //to see later !!!!!!!
       optimizer.zero_grad();
       outpt.backward();
       optimizer.step();
       
-      Loss+=outpt.accessor<float,1>()[0];
-      Acc += acc.template item<float>();
-	  
+      //Acc += acc.template item<float>();  
       if (index++ % interval == 0)
          {
            auto end = std::min(data_size, (index + 1) * batch_size);
          
            std::cout << "Train Epoch: " << epoch << " " << end << "/" << data_size
-                     << "\tLoss: " << Loss / end << "\tAcc: " << Acc / end
-                     << std::endl;
+                     << "\tLoss: " << Loss << std::endl;
          
          }
+     }
    }
+   // Overall error 
+   std::cout<<" Overall training error =====> "<<"Epoch: "<<epoch<<"Loss :"<<Loss/err_tr_count<<std::endl;
 }
 /***********************************************************************/ // pas de besoin de batching pour le test
 template <typename DataLoader> void  SimilarityLearner::test (StereoDataset Dataset,ConvNet_Fast NetworkTe,
@@ -247,7 +265,8 @@ size_t data_size, torch::Device device,Options opt)
 	actualGT.sub(pred).abs();
 	pred_bad=actualGT.gt(opt.err_at).mul(mask);                                        // To check accordingly !!!!!!!!!!!!!!!!!! 
 	pred_good=actualGT.le(opt.err_at).mul(mask);
-	float err=pred_bad.sum()/mask.sum();
+	auto errT=pred_bad.sum().div(mask.sum());
+	float err=errT.accessor<float,1>()[0];
 	err_sum+=err;
 	std::cout<<"  Error for the image id  "<<indexIm<<" is  : "<<err<<std::endl;
    }
@@ -539,7 +558,7 @@ int main(int argc, char **argv) {
   }
   //********************Reading Training and Testing Data**************\\
   // Get Tensors names : have been saved before for data preparation
-  std::string Datapath="../DataExample/";
+  std::string Datapath="./DataExample2/";
   std::string X0_left_Dataset=Datapath+"x0.bin";
   std::string X1_right_Dataset=Datapath+"x1.bin";
   std::string dispnoc_Data=Datapath+"dispnoc.bin";
@@ -577,7 +596,7 @@ int main(int argc, char **argv) {
              opt.n_input_plane, Ws,opt.trans, opt.hscale, opt.scale, opt.hflip,opt.vflip,opt.brightness,opt.true1,opt.false1,opt.false2,opt.Rotate, 
              opt.contrast,opt.d_hscale, opt.d_hshear, opt.d_vtrans, opt.d_brightness, opt.d_contrast,opt.d_rotate); */ 
              
-  std::cout<<" Dataset Testing has been successfully read and processed  "<<std::endl;
+  //std::cout<<" Dataset Testing has been successfully read and processed  "<<std::endl;
 /**********************************************************************/
 // Training On the IARPA DATASET 
    // Hyper parameters
@@ -588,6 +607,7 @@ int main(int argc, char **argv) {
       std::move(IARPADatasetTr), opt.bs/2);
   
   int num_train_samples=IARPADatasetTr.size().value();
+  std::cout<<"dataset size "<<std::endl;
   
 
   torch::optim::SGD optimizer(
@@ -607,21 +627,25 @@ int main(int argc, char **argv) {
  
  std::string outputfileName=std::string(argv[5])+std::string("/net_")+std::string(argv[1])+std::string("_")+std::string(argv[2])+std::string("_")+std::to_string(num_epochs)+std::string(".pt");
  
- ConvNet_Fast TestNetwork;
+ ConvNet_Fast TestNetwork(3,opt.ll1);
  TestNetwork->createModel(opt.fm,opt.ll1,opt.n_input_plane,3);
- //SimilarityLearn.Load_Network(TestNetwork,outputfileName);
+ SimilarityLearn.Load_Network(TestNetwork,outputfileName);
  
  // Need to change padding to value 1 so output image will keep the same size as the input 
- /*auto Fast=TestNetwork->getFastSequential(); 
+ auto Fast=TestNetwork->getFastSequential(); 
  size_t Sz=Fast->size();
  size_t cc=0;
  for (cc=0;cc<Sz;cc++)
   {
     if (Fast->named_children()[cc].key()==std::string("conv")+std::to_string(cc))
-        { Fast->named_children()[cc].options.padding=1;}
-  } */
+        
+        {   //torch::nn::Conv2dImpl *mod=Fast->named_children()[cc].value().get()->as<torch::nn::Conv2dImpl>();
+			Fast->named_children()[cc].value().get()->as<torch::nn::Conv2dImpl>()->options.padding()=1;
+		}
+  } 
  // Now Testing routine on test dataset : No need for a dataloader because we ll be using the whole pair of left and right tile 
- 
+
+// 
 /**********************************************************************/
  return 0;
 }

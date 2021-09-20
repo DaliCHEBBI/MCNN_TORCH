@@ -23,7 +23,7 @@ using namespace std;
 
 class StereoDataset : public torch::data::Dataset<StereoDataset>
 {
-    private:
+   public:
 
         //std::vector<std::tuple<std::string /*file location*/, int64_t /*label*/>> csv_;
          torch::Tensor mX0_left_Dataset;
@@ -54,7 +54,6 @@ class StereoDataset : public torch::data::Dataset<StereoDataset>
          float d_contrast;
          float d_rotate;
          
-    public:
         explicit StereoDataset(std::string X0_left_Dataset,std::string X1_right_Dataset,std::string dispnoc_Data,
              std::string metadata_File,std::string tr_File,std::string te_File,std::string nnztr_File,std::string nnzte_File, 
              int input_plane, int ws, int transs, float hscalee, float scalee, float hflipp,

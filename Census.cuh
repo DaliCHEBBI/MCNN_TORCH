@@ -52,22 +52,19 @@ void subset_dataset(torch::Tensor indexT, torch::Tensor inputT, torch::Tensor ou
 void make_dataset2(torch::Tensor dispT, torch::Tensor nnzT, int img, int t);
 void grey2jet(torch::Tensor *grey_img, torch::Tensor *col_img);
 
-int sgm2(torch::Tensor x0, torch::Tensor x1, torch::Tensor input , torch::Tensor output, torch::Tensor tmp,
+void sgm2(torch::Tensor x0, torch::Tensor x1, torch::Tensor input , torch::Tensor output, torch::Tensor tmp,
      float pi1,float pi2, float tau_so, float alpha1, float sgm_q1, float sgm_q2, int direction
         );
-int CrBaCoAgg(torch::Tensor x0c, torch::Tensor x1c, torch::Tensor vol_in, torch::Tensor vol_out,  int direction);
-int Cross(torch::Tensor x0, torch::Tensor out, int L1, float tau1);
+void CrBaCoAgg(torch::Tensor x0c, torch::Tensor x1c, torch::Tensor vol_in, torch::Tensor vol_out,  int direction);
+void Cross(torch::Tensor x0, torch::Tensor out, int L1, float tau1);
 void checkCudaError();
-int outlier_detection (torch::Tensor d0, torch::Tensor d1, torch::Tensor outlier, int disp_max);
-int interpolate_mismatch(torch::Tensor d0, torch::Tensor outlier, torch::Tensor out);
-int interpolate_occlusion(torch::Tensor d0, torch::Tensor outlier,torch::Tensor out);
-int subpixel_enchancement(torch::Tensor d0, torch::Tensor c2, torch::Tensor out, int disp_max) ;
-int mean2d(torch::Tensor img, torch::Tensor kernel, torch::Tensor out, float alpha2);
-int StereoJoin(torch::Tensor input_L, torch::Tensor input_R, torch::Tensor output_L,torch::Tensor output_R);
-int median2d(torch::Tensor img, torch::Tensor out, int kernel_size);
-
-
-
+void outlier_detection (torch::Tensor d0, torch::Tensor d1, torch::Tensor outlier, int disp_max);
+void interpolate_mismatch(torch::Tensor d0, torch::Tensor outlier, torch::Tensor out);
+void interpolate_occlusion(torch::Tensor d0, torch::Tensor outlier,torch::Tensor out);
+void subpixel_enchancement(torch::Tensor d0, torch::Tensor c2, torch::Tensor out, int disp_max) ;
+void mean2d(torch::Tensor img, torch::Tensor kernel, torch::Tensor out, float alpha2);
+void StereoJoin(torch::Tensor input_L, torch::Tensor input_R, torch::Tensor output_L,torch::Tensor output_R);
+void median2d(torch::Tensor img, torch::Tensor out, int kernel_size);
 
 
 

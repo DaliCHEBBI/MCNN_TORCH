@@ -204,7 +204,7 @@ __global__ void cross(float *x0, float *out, int size, int dim2, int dim3, int L
 	}
 }
 /***********************************************************************/
-int Cross(torch::Tensor x0, torch::Tensor out, int L1, float tau1)
+void Cross(torch::Tensor x0, torch::Tensor out, int L1, float tau1)
 {
 	cross<<<(out.numel() - 1) / TB + 1, TB>>>(
 		x0.data_ptr<float>(),
@@ -214,7 +214,7 @@ int Cross(torch::Tensor x0, torch::Tensor out, int L1, float tau1)
 		out.size(3),
 		L1, tau1);
 	checkCudaError();
-	return 0;
+	//return 0;
 }
 
 /***********************************************************************/
@@ -254,7 +254,7 @@ __global__ void cbca(float *x0c, float *x1c, float *vol, float *out, int size, i
 	}
 }
 /***********************************************************************/
-int CrBaCoAgg(torch::Tensor x0c, torch::Tensor x1c, torch::Tensor vol_in, torch::Tensor vol_out,  int direction)
+void CrBaCoAgg(torch::Tensor x0c, torch::Tensor x1c, torch::Tensor vol_in, torch::Tensor vol_out,  int direction)
 {
 	assert(direction == -1 or direction == 1);
 	cbca<<<(vol_out.numel() - 1) / TB + 1, TB>>>(
@@ -267,7 +267,7 @@ int CrBaCoAgg(torch::Tensor x0c, torch::Tensor x1c, torch::Tensor vol_in, torch:
 		vol_out.size(3),
 		direction);
 	checkCudaError();
-	return 0;
+	//return 0;
 }
 
 /***********************************************************************/
@@ -454,7 +454,7 @@ template <int sgm_direction> __global__ void sgm2(float *x0, float *x1, float *i
 	tmp[d * size2 + blockIdx.x] = val;
 }
 /***********************************************************************/
-int sgm2(torch::Tensor x0, torch::Tensor x1, torch::Tensor input , torch::Tensor output, torch::Tensor tmp,
+void sgm2(torch::Tensor x0, torch::Tensor x1, torch::Tensor input , torch::Tensor output, torch::Tensor tmp,
      float pi1,float pi2, float tau_so, float alpha1, float sgm_q1, float sgm_q2, int direction
         )
 {
@@ -519,7 +519,7 @@ int sgm2(torch::Tensor x0, torch::Tensor x1, torch::Tensor input , torch::Tensor
 	}
 
 	checkCudaError();
-	return 0;
+	//return 0;
 }
 
 /***********************************************************************/
@@ -639,7 +639,7 @@ __global__ void outlier_detection(float *d0, float *d1, float *outlier, int size
 }
 
 /***********************************************************************/
-int outlier_detection (torch::Tensor d0, torch::Tensor d1, torch::Tensor outlier, int disp_max)
+void outlier_detection (torch::Tensor d0, torch::Tensor d1, torch::Tensor outlier, int disp_max)
 {
 	outlier_detection<<<(d0.numel() - 1) / TB + 1, TB>>>(
 		d0.data_ptr<float>(),
@@ -649,7 +649,7 @@ int outlier_detection (torch::Tensor d0, torch::Tensor d1, torch::Tensor outlier
 		d0.size(3),
 		disp_max);
 	checkCudaError();
-	return 0;
+	//return 0;
 }
 
 /***********************************************************************/
@@ -764,7 +764,7 @@ __global__ void interpolate_mismatch(float *d0, float *outlier, float *out, int 
 	}
 }
 
-int interpolate_mismatch(torch::Tensor d0, torch::Tensor outlier, torch::Tensor out)
+void interpolate_mismatch(torch::Tensor d0, torch::Tensor outlier, torch::Tensor out)
 {
 	interpolate_mismatch<<<(out.numel() - 1) / TB + 1, TB>>>(
 		d0.data_ptr<float>(),
@@ -775,7 +775,7 @@ int interpolate_mismatch(torch::Tensor d0, torch::Tensor outlier, torch::Tensor 
 		out.size(3));
 
 	checkCudaError();
-	return 1;
+	//return 1;
 }
 
 __global__ void interpolate_occlusion(float *d0, float *outlier, float *out, int size, int dim3)
@@ -806,7 +806,7 @@ __global__ void interpolate_occlusion(float *d0, float *outlier, float *out, int
 	}
 }
 
-int interpolate_occlusion(torch::Tensor d0, torch::Tensor outlier,torch::Tensor out)
+void interpolate_occlusion(torch::Tensor d0, torch::Tensor outlier,torch::Tensor out)
 {
 	interpolate_occlusion<<<(out.numel() - 1) / TB + 1, TB>>>(
 		d0.data_ptr<float>(),
@@ -816,7 +816,7 @@ int interpolate_occlusion(torch::Tensor d0, torch::Tensor outlier,torch::Tensor 
 		out.size(3)
 	);
 	checkCudaError();
-	return 1;
+	//return 1;
 }
 
 
@@ -873,7 +873,7 @@ __global__ void subpixel_enchancement(float *d0, float *c2, float *out, int size
 	}
 }
 
-int subpixel_enchancement(torch::Tensor d0, torch::Tensor c2, torch::Tensor out, int disp_max) {
+void subpixel_enchancement(torch::Tensor d0, torch::Tensor c2, torch::Tensor out, int disp_max) {
 
 	subpixel_enchancement<<<(out.numel() - 1) / TB + 1, TB>>>(
 		d0.data_ptr<float>(),
@@ -883,7 +883,7 @@ int subpixel_enchancement(torch::Tensor d0, torch::Tensor c2, torch::Tensor out,
 		out.size(2)* out.size(3),
 		disp_max);
 	checkCudaError();
-	return 1;
+	//return 1;
 }
 
 __global__ void mean2d(float *img, float *kernel, float *out, int size, int kernel_radius, int dim2, int dim3, float alpha2)
@@ -909,7 +909,7 @@ __global__ void mean2d(float *img, float *kernel, float *out, int size, int kern
 }
 
 
-int mean2d(torch::Tensor img, torch::Tensor kernel, torch::Tensor out, float alpha2) {
+void mean2d(torch::Tensor img, torch::Tensor kernel, torch::Tensor out, float alpha2) {
 	assert(kernel.size(0) % 2 == 1);
 	mean2d<<<(out.numel() - 1) / TB + 1, TB>>>(
 		img.data_ptr<float>(),
@@ -921,7 +921,7 @@ int mean2d(torch::Tensor img, torch::Tensor kernel, torch::Tensor out, float alp
 		out.size(3),
 		alpha2);
 	checkCudaError();
-	return 1;
+	//return 1;
 }
 
 __global__ void Normalize_get_norm_(float *input, float *norm, int size1, int size23, int size023)
@@ -1047,7 +1047,7 @@ __global__ void StereoJoin_(float *input_L, float *input_R, float *output_L, flo
 }
 
 /************************************************************************/
-int StereoJoin(torch::Tensor input_L, torch::Tensor input_R, torch::Tensor output_L,torch::Tensor output_R)
+void StereoJoin(torch::Tensor input_L, torch::Tensor input_R, torch::Tensor output_L,torch::Tensor output_R)
 {
 	int size23 = output_L.size(1)*output_L.size(2);
 	int size1_input=input_L.size(0);
@@ -1063,7 +1063,7 @@ int StereoJoin(torch::Tensor input_L, torch::Tensor input_R, torch::Tensor outpu
 		size3,
 		size23);
 	checkCudaError();
-	return 0;
+	//return 0;
 }
 /************************************************************************/
 
@@ -1133,7 +1133,7 @@ __global__ void median2d(float *img, float *out, int size, int dim2, int dim3, i
 }
 
 /***********************************************************************/
-int median2d(torch::Tensor img, torch::Tensor out, int kernel_size) {
+void median2d(torch::Tensor img, torch::Tensor out, int kernel_size) {
 	assert(kernel_size % 2 == 1);
 	assert(kernel_size <= 11);
 	median2d<<<(out.numel() - 1) / TB + 1, TB>>>(
@@ -1144,7 +1144,7 @@ int median2d(torch::Tensor img, torch::Tensor out, int kernel_size) {
 		out.size(3),
 		kernel_size / 2);
 	checkCudaError();
-	return 1;
+	//return 1;
 }
 /***********************************************************************/
 void readPNG16(torch::Tensor *imgT, const char * fname)   // See later how to make it a Float Tensor 
