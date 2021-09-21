@@ -1,4 +1,5 @@
 #include <torch/torch.h>
+#include <torch/script.h>
 #include <ATen/ATen.h>
 #include <iostream>
 #include <stdio.h>
@@ -84,7 +85,7 @@ public:
 		{};
 		template <typename DataLoader> void  train (ConvNet_Fast Network, DataLoader& loader,
 		torch::optim::Optimizer& optimizer,size_t epoch,size_t data_size, int batch_size,int interval,torch::Device device);
-		template <typename DataLoader> void  test  (StereoDataset Dataset,ConvNet_Fast Network,size_t data_size, torch::Device device, Options opt);
+		void  test  (StereoDataset Dataset,ConvNet_Fast Network,size_t data_size, torch::Device device, Options opt);
 		torch::Tensor predict(torch::Tensor X_batch, ConvNet_Fast Network,int disp_max,torch::Device device, 
                               Options opt);
 		// All postprocessing Steps Stereo-Method
@@ -106,7 +107,7 @@ public:
         torch::Tensor gaussian(float blur_sigma);
         int GetWindowSize(ConvNet_Fast &Network);
         void Load_Network(ConvNet_Fast Network, std::string filename);
-        void fix_border(ConvNet_Fast net,torch::Tensor vol,int  direction);
+        void fix_border(ConvNet_Fast Network,torch::Tensor vol,int  direction);
 };
 
 
@@ -163,7 +164,8 @@ void SimilarityLearner::fix_border(ConvNet_Fast net,torch::Tensor vol,int  direc
    for (int i=0;i<n;i++)
     {
 		using namespace torch::indexing;
-		vol.index_put_({"...","...","...",direction*i},vol.index({"...","...","...",direction*n}));     // a verifier plus tard !!!!!!!!!!!!!!!!!!!!!!!!!
+		vol.index_put_({"...","...","...",Slice(direction*i,None,direction*(i+1))},vol.slice(3,direction*n,direction*(n+1)));
+		//vol.index_put_({"...","...","...",direction*i},vol.index({"...","...","...",direction*n}));     // a verifier plus tard !!!!!!!!!!!!!!!!!!!!!!!!!
 		//vol.index_put_({,direction*i},vol.index({,direction*n}));     // a verifier plus tard !!!!!!!!!!!!!!!!!!!!!!!!!
     }
       //vol[{{},{},{},direction * i}]:copy(vol[{{},{},{},direction * (n + 1)}])
@@ -219,7 +221,6 @@ template <typename DataLoader> void SimilarityLearner::train(ConvNet_Fast Networ
       outpt.backward();
       optimizer.step();
       
-      //Acc += acc.template item<float>();  
       if (index++ % interval == 0)
          {
            auto end = std::min(data_size, (index + 1) * batch_size);
@@ -234,28 +235,36 @@ template <typename DataLoader> void SimilarityLearner::train(ConvNet_Fast Networ
    std::cout<<" Overall training error =====> "<<"Epoch: "<<epoch<<"Loss :"<<Loss/err_tr_count<<std::endl;
 }
 /***********************************************************************/ // pas de besoin de batching pour le test
-template <typename DataLoader> void  SimilarityLearner::test (StereoDataset Dataset,ConvNet_Fast NetworkTe,
+void  SimilarityLearner::test (StereoDataset Dataset,ConvNet_Fast NetworkTe,
 size_t data_size, torch::Device device,Options opt)
 
 // NEED TO ADD PREDICTION AND COMPARISON WITH RESPECT TO GROUND TRUTH !!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 {
   //Network->eval();
   torch::NoGradGuard no_grad;
-  float Loss = 0, Acc = 0;
+  float Loss = 0;
   float err_sum=0.0;
   torch::Tensor X_batch=torch::empty({2,1,opt.height,opt.width},torch::TensorOptions().dtype(torch::kFloat32).device(device));
   torch::Tensor pred_good, pred_bad, pred;  // SIZE IS TO BE DEFINED !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   for (int i=0; i<Dataset.mte.size(0); i++) // the indexes of test images are in "te.bin" of dimension n 
   {
-	int indexIm=(int)(Dataset.mte.accessor<float,1>()[i]);
-	torch::Tensor currentMetadata=Dataset.mmetadata.index({indexIm});
-	int img_heigth=(int)(currentMetadata.accessor<float,1>()[0]);
-	int img_width =(int)(currentMetadata.accessor<float,1>()[1]);
-	int id  = (int)(currentMetadata.accessor<float,1>()[2]);
-	X_batch.index_put_({0},Dataset.mX0_left_Dataset.index({indexIm})); // May ll add img_width to avoid "out_of_range"   ^^^^^^^^^
-	X_batch.index_put_({1},Dataset.mX1_right_Dataset.index({indexIm})); // May ll add img_width to avoid "out_of_range"  ^^^^^^^^^
+	std::cout<<"testing code at level test data accessor "<<std::endl;
+	auto indexIm=Dataset.mte.accessor<int64_t,1>()[i];
+	std::cout<<"testing code at level test data accessor auto"<<std::endl;
+	std::cout<<"index value "<<indexIm<<std::endl;
+	int indId=indexIm;
+	torch::Tensor currentMetadata=Dataset.mmetadata.index({indId-1});
+	std::cout<<"testing code at level test data accessor auto +"<<std::endl;
+	auto img_heigth=currentMetadata.accessor<int32_t,1>()[0];
+	auto img_width =currentMetadata.accessor<int32_t,1>()[1];
+	auto id  =currentMetadata.accessor<int32_t,1>()[2];
+	std::cout<<"testing code at level after test data accessor "<<std::endl;
+	X_batch.index_put_({0},Dataset.mX0_left_Dataset.index({indexIm-1})); // May ll add img_width to avoid "out_of_range"   ^^^^^^^^^
+	X_batch.index_put_({1},Dataset.mX1_right_Dataset.index({indexIm-1})); // May ll add img_width to avoid "out_of_range"  ^^^^^^^^^
 	//*******+++++++++ I think i need to synchronize with GPU Later 
+	std::cout<<"testing code at level predict  "<<std::endl;
 	pred=this->predict(X_batch,NetworkTe,opt.disp_max,device,opt);   // This will bug no size defined for the tensor          ^^^^^^^^^
+	std::cout<<"testing code at level after predict presque impossible "<<std::endl;
 	torch::Tensor actualGT=Dataset.mdispnoc.index({indexIm});            // May ll add img_width to avoid "out_of_range" ^^^^^^^^^
 	at::resize_as_(pred_good,actualGT);
 	at::resize_as_(pred_bad,actualGT);
@@ -278,13 +287,16 @@ torch::Tensor SimilarityLearner::predict(torch::Tensor X_batch, ConvNet_Fast Net
                                          Options opt)
 {
    // CHECK X_batch shape !!!!!!!!!!!!!!!!!!!!
-   auto output=Network->forward(X_batch);
+   auto output=Network->forward_but_Last(X_batch);
+   std::cout<<"ouput of network sizes "<<output.sizes()<<std::endl;
    torch::Tensor vols = torch::empty({2, disp_max, X_batch.size(2), X_batch.size(3)},torch::TensorOptions().dtype(torch::kFloat32).device(device));
+	std::cout<<"testing code at level before stereo join "<<std::endl;
    StereoJoin(output.index({0}), output.index({1}), vols.index({0}), vols.index({1}));  // implemented in cuda !!!!!!!+++++++
+	std::cout<<"testing code at level after stereo join  "<<std::endl;
    this->fix_border(Network,  vols.index({0}), -1);             // fix_border to implement !!!!!!!!!
    this->fix_border(Network,  vols.index({1}), 1);              // fix_border to implement !!!!!!!!!*
-   
-   /**********************/
+	std::cout<<"testing code at level after fix border  "<<std::endl;
+   /*******************************************************************/
    torch::Tensor disp,vol;
    int mb_directions[2] = {1,-1};
    for (auto direction : mb_directions)
@@ -590,17 +602,11 @@ int main(int argc, char **argv) {
              opt.contrast,opt.d_hscale, opt.d_hshear, opt.d_vtrans, opt.d_brightness, opt.d_contrast,opt.d_rotate); 
 
   std::cout<<" Dataset Training has been successfully read and processed  "<<std::endl;
-  // Test Dataset   // BASED ON "StereoDataset2.h"
-  /*auto IARPADatasetTe = StereoDataset(
-             X0_left_Dataset,X1_right_Dataset,dispnoc_Data,metadata_File,tr_File,te_File,nnzte_File, 
-             opt.n_input_plane, Ws,opt.trans, opt.hscale, opt.scale, opt.hflip,opt.vflip,opt.brightness,opt.true1,opt.false1,opt.false2,opt.Rotate, 
-             opt.contrast,opt.d_hscale, opt.d_hshear, opt.d_vtrans, opt.d_brightness, opt.d_contrast,opt.d_rotate); */ 
-             
-  //std::cout<<" Dataset Testing has been successfully read and processed  "<<std::endl;
+
 /**********************************************************************/
 // Training On the IARPA DATASET 
    // Hyper parameters
-  const size_t num_epochs = 5;
+  const size_t num_epochs = 1;
   const double learning_rate = 0.001;
   // Data loader  ==> Training dataset  
   auto train_loader = torch::data::make_data_loader<torch::data::samplers::RandomSampler>(
@@ -620,32 +626,63 @@ int main(int argc, char **argv) {
  }
  
  std::string fileName=std::string(argv[5])+std::string("/net_")+std::string(argv[1])+std::string("_")+std::string(argv[2])+std::string("_")+std::to_string(num_epochs)+std::string(".pt");
- SimilarityLearn.Save_Network(Network,fileName);
- 
+ //SimilarityLearn.Save_Network(Network,fileName);
+ torch::save(Network,fileName);
 /**********************************************************************/
  // Testing on an Unseen chunk of the IARPA DATASET 
  
  std::string outputfileName=std::string(argv[5])+std::string("/net_")+std::string(argv[1])+std::string("_")+std::string(argv[2])+std::string("_")+std::to_string(num_epochs)+std::string(".pt");
  
- ConvNet_Fast TestNetwork(3,opt.ll1);
- TestNetwork->createModel(opt.fm,opt.ll1,opt.n_input_plane,3);
- SimilarityLearn.Load_Network(TestNetwork,outputfileName);
+ //ConvNet_Fast TestNetwork(3,opt.ll1);
+ 
+ /**********************************************************************/
+ 
+ /********* *HOW TO READ PICKLED MODEL ==> FIND A SOLUTION *************/
+ /**********************************************************************/
+ 
+ // Need to copy the learnt model to the test model and do testing 
+ //auto copy =Network->clone();
+ 
+ //TestNetwork= std::dynamic_pointer_cast<ConvNet_Fast>(copy);
+ //TestNetwork= Network->clone();
+ //TestNetwork->createModel(opt.fm,opt.ll1,opt.n_input_plane,3);
+ //SimilarityLearn.Load_Network(TestNetwork,outputfileName);
+  
+  //torch::load(TestNetwork,outputfileName);
  
  // Need to change padding to value 1 so output image will keep the same size as the input 
- auto Fast=TestNetwork->getFastSequential(); 
+ auto Fast=Network->getFastSequential(); 
  size_t Sz=Fast->size();
  size_t cc=0;
  for (cc=0;cc<Sz;cc++)
   {
-    if (Fast->named_children()[cc].key()==std::string("conv")+std::to_string(cc))
+	std::cout<<"Name of layer "<<Fast->named_children()[cc].key()<<std::endl;
+	std::string LayerName=Fast->named_children()[cc].key();
+    if (LayerName.rfind(std::string("conv"),0)==0)
         
         {   //torch::nn::Conv2dImpl *mod=Fast->named_children()[cc].value().get()->as<torch::nn::Conv2dImpl>();
-			Fast->named_children()[cc].value().get()->as<torch::nn::Conv2dImpl>()->options.padding()=1;
-		}
+			std::cout<<"condition verified on name of convolution "<<std::endl;
+        	Fast->named_children()[cc].value().get()->as<torch::nn::Conv2dImpl>()->options.padding()=1;
+        }
   } 
  // Now Testing routine on test dataset : No need for a dataloader because we ll be using the whole pair of left and right tile 
 
-// 
+/*********************LOADING TEST DATASET*****************************/
+  // Test Dataset 
+ auto IARPADatasetTe = StereoDataset(
+             X0_left_Dataset,X1_right_Dataset,dispnoc_Data,metadata_File,tr_File,te_File,nnztr_File,nnzte_File, 
+             opt.n_input_plane, Ws,opt.trans, opt.hscale, opt.scale, opt.hflip,opt.vflip,opt.brightness,opt.true1,opt.false1,opt.false2,opt.Rotate, 
+             opt.contrast,opt.d_hscale, opt.d_hshear, opt.d_vtrans, opt.d_brightness, opt.d_contrast,opt.d_rotate);
+ 
+  int num_test_samples=IARPADatasetTe.size().value();
+  std::cout<<" Test dataset size "<<std::endl;
+  
+ //std::cout<<" Dataset Testing has been successfully read and processed  "<<std::endl;
+ //SimilarityLearn.test(IARPADatasetTe,Network,num_test_samples, device,opt);
+ torch::Tensor a = torch::empty({10,10,10},Torch::TensorOptions().dtype(torch::kFloat32).device(device));
+ torch::Tensor b = torch::ones({10,10,10},Torch::TensorOptions().dtype(torch::kFloat32).device(device));
+ 
+ a.index_put_()
 /**********************************************************************/
  return 0;
 }
