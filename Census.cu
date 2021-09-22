@@ -7,6 +7,7 @@
 #include <torch/torch.h>
 #include "Census.cuh"
 
+using namespace std;
 
 #define TB 128
 
@@ -213,6 +214,7 @@ void Cross(torch::Tensor x0, torch::Tensor out, int L1, float tau1)
 		out.size(2),
 		out.size(3),
 		L1, tau1);
+    std::cout<<"entered cross"<<std::endl;
 	checkCudaError();
 	//return 0;
 }
@@ -646,7 +648,7 @@ void outlier_detection (torch::Tensor d0, torch::Tensor d1, torch::Tensor outlie
 		d1.data_ptr<float>(),
 		outlier.data_ptr<float>(),
 		d0.numel(),
-		d0.size(3),
+		d0.size(2),
 		disp_max);
 	checkCudaError();
 	//return 0;
@@ -771,8 +773,8 @@ void interpolate_mismatch(torch::Tensor d0, torch::Tensor outlier, torch::Tensor
 		outlier.data_ptr<float>(),
 		out.data_ptr<float>(),
 		out.numel() ,
-		out.size(2),
-		out.size(3));
+		out.size(1),
+		out.size(2));
 
 	checkCudaError();
 	//return 1;
@@ -813,7 +815,7 @@ void interpolate_occlusion(torch::Tensor d0, torch::Tensor outlier,torch::Tensor
 		outlier.data_ptr<float>(),
 		out.data_ptr<float>(),
 		out.numel(),
-		out.size(3)
+		out.size(2)
 	);
 	checkCudaError();
 	//return 1;
@@ -880,7 +882,7 @@ void subpixel_enchancement(torch::Tensor d0, torch::Tensor c2, torch::Tensor out
 		c2.data_ptr<float>(),
 		out.data_ptr<float>(),
 		out.numel(),
-		out.size(2)* out.size(3),
+		out.size(1)* out.size(2),
 		disp_max);
 	checkCudaError();
 	//return 1;
@@ -917,8 +919,8 @@ void mean2d(torch::Tensor img, torch::Tensor kernel, torch::Tensor out, float al
 		out.data_ptr<float>(),
 		out.numel(),
 		kernel.size(0) / 2,
+		out.size(1),
 		out.size(2),
-		out.size(3),
 		alpha2);
 	checkCudaError();
 	//return 1;
@@ -1140,8 +1142,8 @@ void median2d(torch::Tensor img, torch::Tensor out, int kernel_size) {
 		img.data_ptr<float>(),
 		out.data_ptr<float>(),
 		out.numel(),
+		out.size(1),
 		out.size(2),
-		out.size(3),
 		kernel_size / 2);
 	checkCudaError();
 	//return 1;

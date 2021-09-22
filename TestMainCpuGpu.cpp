@@ -18,7 +18,20 @@
 
 namespace F = torch::nn::functional;
 
+template <typename T> void showTensor(torch::Tensor a,int dim1, int dim2)
+{
+	cv::Mat Output=cv::Mat(a.size(dim1),a.size(dim2),CV_32FC1,a.data_ptr<T>());
+	cv::imshow("see",Output);
+	cv::waitKey(0);
+}
 
+void showTensorMask(torch::Tensor a,int dim1, int dim2)
+{
+
+	cv::Mat Output=cv::Mat(a.size(dim1),a.size(dim2),CV_32FC1,a.data_ptr<bool>());
+	cv::imshow("Mask",Output);
+	cv::waitKey(0);
+}
 
 //**********************************************************************
 bool isnan(string n)
@@ -133,14 +146,12 @@ torch::Tensor SimilarityLearner::gaussian(float sigma)
 void SimilarityLearner::Save_Network(ConvNet_Fast Network, std::string filename)
 {
 	auto Fast=Network->getFastSequential();
-	// make sure the model ends with .pt to apply torch::load (model, "model.pt") later 
 	torch::save(Fast, filename.c_str());
 }
 /***********************************************************************/
 void SimilarityLearner::Load_Network(ConvNet_Fast Network, std::string filename)
 {
 	auto Fast=Network->getFastSequential();
-	// make sure the model ends with .pt to apply torch::load (model, "model.pt") later 
 	torch::load(Fast, filename.c_str());
 }
 /***********************************************************************/
@@ -163,12 +174,16 @@ void SimilarityLearner::fix_border(ConvNet_Fast net,torch::Tensor vol,int  direc
    int n = (this->GetWindowSize(net) - 1) / 2;
    for (int i=0;i<n;i++)
     {
-		using namespace torch::indexing;
-		vol.index_put_({"...","...","...",Slice(direction*i,None,direction*(i+1))},vol.slice(3,direction*n,direction*(n+1)));
-		//vol.index_put_({"...","...","...",direction*i},vol.index({"...","...","...",direction*n}));     // a verifier plus tard !!!!!!!!!!!!!!!!!!!!!!!!!
-		//vol.index_put_({,direction*i},vol.index({,direction*n}));     // a verifier plus tard !!!!!!!!!!!!!!!!!!!!!!!!!
+       using namespace torch::indexing;
+       if (direction>0)
+       {
+        vol.index_put_({Slice(0,None,1),Slice(0,None,1),Slice(0,None,1),Slice(direction*i,direction*(i+1),1)},vol.slice(3,direction*n,direction*(n+1),1));
+       }
+       else
+       {
+        vol.index_put_({Slice(0,None,1),Slice(0,None,1),Slice(0,None,1),Slice(direction*(i+1),direction*i,1)},vol.slice(3,direction*(n+1),direction*n,1));
+       }
     }
-      //vol[{{},{},{},direction * i}]:copy(vol[{{},{},{},direction * (n + 1)}])
 }
 /***********************************************************************/
 template <typename DataLoader> void SimilarityLearner::train(ConvNet_Fast Network, DataLoader& loader,
@@ -190,12 +205,12 @@ template <typename DataLoader> void SimilarityLearner::train(ConvNet_Fast Networ
 	  torch::Tensor BatchTarget=torch::empty({batch_size},torch::TensorOptions().dtype(torch::kInt32).device(device));
 	  for (int j=0;j<batch_size/2;j++)
 	  {
-		BatchData.index_put_({4*j},batch.at(j).data.index({0}));
-		BatchData.index_put_({4*j+1},batch.at(j).data.index({1}));
-		BatchData.index_put_({4*j+2},batch.at(j).data.index({2}));
-		BatchData.index_put_({4*j+3},batch.at(j).data.index({3}));
-		BatchTarget.index_put_({2*j},1);
-		BatchTarget.index_put_({2*j+1},0);
+        BatchData.index_put_({4*j},batch.at(j).data.index({0}));
+        BatchData.index_put_({4*j+1},batch.at(j).data.index({1}));
+        BatchData.index_put_({4*j+2},batch.at(j).data.index({2}));
+        BatchData.index_put_({4*j+3},batch.at(j).data.index({3}));
+        BatchTarget.index_put_({2*j},1);
+        BatchTarget.index_put_({2*j+1},0);
       }
 	   //std::cout<<"indexes at batch   ========================="<<std::endl;
       auto out=Network->forward(BatchData);
@@ -249,11 +264,10 @@ size_t data_size, torch::Device device,Options opt)
   for (int i=0; i<Dataset.mte.size(0); i++) // the indexes of test images are in "te.bin" of dimension n 
   {
 	std::cout<<"testing code at level test data accessor "<<std::endl;
-	auto indexIm=Dataset.mte.accessor<int64_t,1>()[i];
+	auto indexIm=Dataset.mte.accessor<int64_t,1>()[i];    // toujours >=1 (créé par torch lua)
 	std::cout<<"testing code at level test data accessor auto"<<std::endl;
 	std::cout<<"index value "<<indexIm<<std::endl;
-	int indId=indexIm;
-	torch::Tensor currentMetadata=Dataset.mmetadata.index({indId-1});
+	torch::Tensor currentMetadata=Dataset.mmetadata.index({indexIm-1}); // toujours >=1 (créé par torch lua)
 	std::cout<<"testing code at level test data accessor auto +"<<std::endl;
 	auto img_heigth=currentMetadata.accessor<int32_t,1>()[0];
 	auto img_width =currentMetadata.accessor<int32_t,1>()[1];
@@ -262,20 +276,29 @@ size_t data_size, torch::Device device,Options opt)
 	X_batch.index_put_({0},Dataset.mX0_left_Dataset.index({indexIm-1})); // May ll add img_width to avoid "out_of_range"   ^^^^^^^^^
 	X_batch.index_put_({1},Dataset.mX1_right_Dataset.index({indexIm-1})); // May ll add img_width to avoid "out_of_range"  ^^^^^^^^^
 	//*******+++++++++ I think i need to synchronize with GPU Later 
+	// SHOW IMAGES  
+	//showTensor<float> (X_batch.slice(0,0,1,1),2,3);
+	//showTensor<float> (X_batch.slice(0,1,2,1),2,3);
 	std::cout<<"testing code at level predict  "<<std::endl;
 	pred=this->predict(X_batch,NetworkTe,opt.disp_max,device,opt);   // This will bug no size defined for the tensor          ^^^^^^^^^
 	std::cout<<"testing code at level after predict presque impossible "<<std::endl;
-	torch::Tensor actualGT=Dataset.mdispnoc.index({indexIm});            // May ll add img_width to avoid "out_of_range" ^^^^^^^^^
-	at::resize_as_(pred_good,actualGT);
-	at::resize_as_(pred_bad,actualGT);
-	torch::Tensor mask;
-	at::resize_as_(mask,actualGT);
-	mask=actualGT.ne(0);              // To check accordingly !!!!!!!!!!!!!!!!!!
+	showTensor<float> (pred,1,2);
+    std::cout<<"Predicted disparity map "<<pred.sizes()<<std::endl;
+	torch::Tensor actualGT=Dataset.mdispnoc.index({indexIm-1});            // May ll add img_width to avoid "out_of_range" ^^^^^^^^^
+	showTensor<float> (actualGT,1,2);
+	std::cout<<"actual gt size "<<actualGT.sizes()<<std::endl;
+	pred_good=torch::empty(actualGT.sizes(),torch::TensorOptions().dtype(torch::kFloat32).device(device));
+	pred_bad=torch::empty(actualGT.sizes(),torch::TensorOptions().dtype(torch::kFloat32).device(device));
+	torch::Tensor mask=torch::zeros(actualGT.sizes(),torch::TensorOptions().dtype(torch::kBool).device(device));
+	std::cout<<"mask declaration "<<std::endl;
+	mask=actualGT.ne(0.0);              // To check accordingly !!!!!!!!!!!!!!!!!!
+	showTensorMask(mask,1,2);
 	actualGT.sub(pred).abs();
 	pred_bad=actualGT.gt(opt.err_at).mul(mask);                                        // To check accordingly !!!!!!!!!!!!!!!!!! 
 	pred_good=actualGT.le(opt.err_at).mul(mask);
 	auto errT=pred_bad.sum().div(mask.sum());
-	float err=errT.accessor<float,1>()[0];
+	std::cout<<errT.item<float>()<<std::endl;
+	float err=errT.item<float>();
 	err_sum+=err;
 	std::cout<<"  Error for the image id  "<<indexIm<<" is  : "<<err<<std::endl;
    }
@@ -293,20 +316,26 @@ torch::Tensor SimilarityLearner::predict(torch::Tensor X_batch, ConvNet_Fast Net
 	std::cout<<"testing code at level before stereo join "<<std::endl;
    StereoJoin(output.index({0}), output.index({1}), vols.index({0}), vols.index({1}));  // implemented in cuda !!!!!!!+++++++
 	std::cout<<"testing code at level after stereo join  "<<std::endl;
-   this->fix_border(Network,  vols.index({0}), -1);             // fix_border to implement !!!!!!!!!
-   this->fix_border(Network,  vols.index({1}), 1);              // fix_border to implement !!!!!!!!!*
+	std::cout<<"volumes sizes of slices "<<vols.slice(0,1,2,1).sizes()<<std::endl;
+   this->fix_border(Network,  vols.slice(0,0,1,1), -1);             // fix_border to implement !!!!!!!!!
+   std::cout<<"dir 1 done"<<std::endl;
+   this->fix_border(Network,  vols.slice(0,1,2,1), 1);              // fix_border to implement !!!!!!!!!*
 	std::cout<<"testing code at level after fix border  "<<std::endl;
    /*******************************************************************/
-   torch::Tensor disp,vol;
+   torch::Tensor vol;
+   torch::Tensor disp=torch::empty({2, X_batch.size(2),X_batch.size(3)},torch::TensorOptions().dtype(torch::kFloat32).device(device));
    int mb_directions[2] = {1,-1};
+   std::cout<<"Cross based cost aggregation to be done !"<<std::endl;
    for (auto direction : mb_directions)
    {
-	  vol = vols.index({direction == -1 and 0 or 1});
+	  vol=vols.slice(0,direction == -1 ? 0 : 1, direction == -1 ? 1 : 2,1);
+	  std::cout<<"volume size "<<vol.sizes()<<std::endl;
       //cross based cost aggregation CBCA
       torch::Tensor x0c=torch::empty({1, 4, vol.size(2), vol.size(3)},torch::TensorOptions().dtype(torch::kFloat32).device(device));
       torch::Tensor x1c=torch::empty({1, 4, vol.size(2), vol.size(3)},torch::TensorOptions().dtype(torch::kFloat32).device(device));
-      Cross(X_batch.index({0}), x0c, opt.L1, opt.tau1); 
-      Cross(X_batch.index({1}), x1c, opt.L1, opt.tau1); 
+      std::cout<<"tempo tensor sizes "<<x0c.sizes()<<"   "<<x1c.sizes()<<std::endl;
+      Cross(X_batch.slice(0,0,1,1), x0c, opt.L1, opt.tau1); 
+      Cross(X_batch.slice(0,1,2,1), x1c, opt.L1, opt.tau1); 
       torch::Tensor tmp_cbca = torch::empty({1, disp_max, vol.size(2), vol.size(3)},torch::TensorOptions().dtype(torch::kFloat32).device(device));
       for  (int i=0;i<opt.cbca_i1;i++)
         {
@@ -314,43 +343,54 @@ torch::Tensor SimilarityLearner::predict(torch::Tensor X_batch, ConvNet_Fast Net
          vol.copy_(tmp_cbca);
 	    }
 	  // SGM 
+	  std::cout<<"Cross based cost aggregation has been done !"<<std::endl;
       vol = vol.transpose(1, 2).transpose(2, 3).clone(); // see it later !!!!!!!! it is absolutely  not going to work !!!!!!!!!
+      std::cout<<"volume  transposed "<<vol.sizes()<<std::endl;
       torch::Tensor out = torch::empty({1, vol.size(1), vol.size(2), vol.size(3)},torch::TensorOptions().dtype(torch::kFloat32).device(device));
       torch::Tensor tmp = torch::empty({vol.size(2), vol.size(3)},torch::TensorOptions().dtype(torch::kFloat32).device(device));
       for (int i=0;i<opt.sgm_i;i++)
         {
-             sgm2(X_batch.index({0}), X_batch.index({1}), vol, out, tmp, opt.pi1, opt.pi2, opt.tau_so,
+             sgm2(X_batch.slice(0,0,1,1), X_batch.slice(0,1,2,1), vol, out, tmp, opt.pi1, opt.pi2, opt.tau_so,
                 opt.alpha1, opt.sgm_q1, opt.sgm_q2, direction);
              vol.copy_(out).div(3);
 	    }
       vol.resize_({1, disp_max, X_batch.size(2), X_batch.size(3)});
       vol.copy_(out.transpose(2, 3).transpose(1, 2)).div(3);
-      
+      std::cout<<"after sgm 2 has been done !"<<std::endl;
       //  ANOTHER CBCA 2
       for (int i=0;i<opt.cbca_i2;i++)
          {
            CrBaCoAgg(x0c, x1c, vol, tmp_cbca, direction);
            vol.copy_(tmp_cbca);
          }
+      std::cout<<"cross based cost aggregation 2 "<<std::endl;
        // Get the min disparity from the cost volume 
       std::tuple<torch::Tensor, torch::Tensor> d_Tpl = torch::min(vol,1);
       torch::Tensor d=std::get<0>(d_Tpl);
       at::reshape(d, {1, X_batch.size(2),X_batch.size(3)});
-      disp.index_put_({direction == 1 and 0 or 1}, d.add(-1)); // Make sure it is correct and see what it gives as a result !!!!!!!!!!!! 
+      disp.index_put_({direction == 1 ? 0 : 1}, d.add(-1)); // Make sure it is correct and see what it gives as a result !!!!!!!!!!!! 
    }
+   std::cout<<"stereo process completed"<<std::endl;
       // All Subsequent steps that allow to handle filtering and interpolation 
-      torch::Tensor outlier = torch::empty(disp.index({1}).sizes(),torch::TensorOptions().dtype(torch::kFloat32).device(device));
-      torch::Tensor out = torch::empty(disp.index({1}).sizes(),torch::TensorOptions().dtype(torch::kFloat32).device(device));
-      torch::Tensor out2 = torch::empty(disp.index({1}).sizes(),torch::TensorOptions().dtype(torch::kFloat32).device(device));
-      torch::Tensor out3 = torch::empty(disp.index({1}).sizes(),torch::TensorOptions().dtype(torch::kFloat32).device(device));
-      torch::Tensor out4 = torch::empty(disp.index({1}).sizes(),torch::TensorOptions().dtype(torch::kFloat32).device(device));
-      torch::Tensor out5 = torch::empty(disp.index({1}).sizes(),torch::TensorOptions().dtype(torch::kFloat32).device(device));
-      outlier_detection(disp.index({1}), disp.index({0}), outlier, disp_max);
-      interpolate_occlusion(disp.index({1}), outlier,out);       // CHECK THIS UP !!!!!!!!!!!!!!!
+      torch::Tensor outlier = torch::empty(disp.slice(0,1,2,1).sizes(),torch::TensorOptions().dtype(torch::kFloat32).device(device));
+      torch::Tensor out = torch::empty(disp.slice(0,1,2,1).sizes(),torch::TensorOptions().dtype(torch::kFloat32).device(device));
+      torch::Tensor out2 = torch::empty(disp.slice(0,1,2,1).sizes(),torch::TensorOptions().dtype(torch::kFloat32).device(device));
+      torch::Tensor out3 = torch::empty(disp.slice(0,1,2,1).sizes(),torch::TensorOptions().dtype(torch::kFloat32).device(device));
+      torch::Tensor out4 = torch::empty(disp.slice(0,1,2,1).sizes(),torch::TensorOptions().dtype(torch::kFloat32).device(device));
+      torch::Tensor out5 = torch::empty(disp.slice(0,1,2,1).sizes(),torch::TensorOptions().dtype(torch::kFloat32).device(device));
+      std::cout<<"disparity map dimensions "<<disp.sizes()<<std::endl;
+      outlier_detection(disp.slice(0,1,2,1), disp.slice(0,1,1,1), outlier, disp_max);
+      std::cout<<"outlier detection done !"<<std::endl;
+      interpolate_occlusion(disp.slice(0,1,2,1), outlier,out);       // CHECK THIS UP !!!!!!!!!!!!!!!
+      std::cout<<"intepolate occlusion done !"<<std::endl;
       interpolate_mismatch(out, outlier,out2);                        // CHECK THIS UP !!!!!!!!!!!!!!!
+      std::cout<<" Mismatch interpolation done !"<<std::endl;
       subpixel_enchancement(out2, vol, out3, disp_max);                 // CHECK THIS UO !!!!!!!!!!!!!!!
-      median2d(out3,out4,5);                                          // CHECK THIS UO !!!!!!!!!!!!!!!
+      std::cout<<"sub pixel enhhancement done !"<<std::endl;
+      median2d(out3,out4,5);            
+      std::cout<<"Median 2 done !"<<std::endl;                              // CHECK THIS UO !!!!!!!!!!!!!!!
       mean2d(out4, gaussian(opt.blur_sigma), out5, opt.blur_t);         // CHECK THIS UO !!!!!!!!!!!!!!!  GAUSSIAN
+   std::cout<<"  filtering has beeen realized "<<std::endl;
    return out5;
 }
 /**********************************************************************/
@@ -570,7 +610,7 @@ int main(int argc, char **argv) {
   }
   //********************Reading Training and Testing Data**************\\
   // Get Tensors names : have been saved before for data preparation
-  std::string Datapath="./DataExample2/";
+  std::string Datapath="./DataExample/";
   std::string X0_left_Dataset=Datapath+"x0.bin";
   std::string X1_right_Dataset=Datapath+"x1.bin";
   std::string dispnoc_Data=Datapath+"dispnoc.bin";
@@ -638,6 +678,7 @@ int main(int argc, char **argv) {
  /**********************************************************************/
  
  /********* *HOW TO READ PICKLED MODEL ==> FIND A SOLUTION *************/
+ 
  /**********************************************************************/
  
  // Need to copy the learnt model to the test model and do testing 
@@ -664,7 +705,7 @@ int main(int argc, char **argv) {
 			std::cout<<"condition verified on name of convolution "<<std::endl;
         	Fast->named_children()[cc].value().get()->as<torch::nn::Conv2dImpl>()->options.padding()=1;
         }
-  } 
+  }
  // Now Testing routine on test dataset : No need for a dataloader because we ll be using the whole pair of left and right tile 
 
 /*********************LOADING TEST DATASET*****************************/
@@ -677,12 +718,35 @@ int main(int argc, char **argv) {
   int num_test_samples=IARPADatasetTe.size().value();
   std::cout<<" Test dataset size "<<std::endl;
   
- //std::cout<<" Dataset Testing has been successfully read and processed  "<<std::endl;
- //SimilarityLearn.test(IARPADatasetTe,Network,num_test_samples, device,opt);
- torch::Tensor a = torch::empty({10,10,10},Torch::TensorOptions().dtype(torch::kFloat32).device(device));
- torch::Tensor b = torch::ones({10,10,10},Torch::TensorOptions().dtype(torch::kFloat32).device(device));
+ std::cout<<" Dataset Testing has been successfully read and processed  "<<std::endl;
+ SimilarityLearn.test(IARPADatasetTe,Network,num_test_samples, device,opt);
  
- a.index_put_()
+ 
+ 
+ /***********************DEBUGGAGE *************************************
+ //torch::Tensor a = torch::empty({2, 192, 1024, 1024},torch::TensorOptions().dtype(torch::kFloat32).device(device));
+ //torch::Tensor b = torch::empty({2, 192, 1024, 1024},torch::TensorOptions().dtype(torch::kFloat32).device(device));
+
+ //torch::Tensor b = torch::ones({10,10},torch::TensorOptions().dtype(torch::kFloat32).device(device));
+ /*int n=9;
+ int direction=-1;
+ //auto b=a.slice(0,0,1,1);
+ std::cout<<b.sizes()<<std::endl;
+ auto temp=a.slice(3,direction*(n+1),direction*n,1);
+ std::cout<<"out size temp "<<temp.sizes()<<std::endl;
+ for (int i=0;i<n;i++)
+ {
+  using namespace torch::indexing;
+  a.index_put_({Slice(0,None,1),Slice(0,None,1),Slice(0,None,1),Slice(direction*(i+1),direction*i,1)},a.slice(3,direction*(n+1),direction*n,1));
+ }
+ //auto sliced_a= a.slice(1,0,1,1); // dim, start,end, step 
+ //a.index_put_({"...",0},b.slice(1,0,1,1));
+ //a.slice(1,0,4)=b.slice(1,0,4);
+ 
+ //a.index_put_({Slice(0,None,1),Slice(0,4,1)},b.slice(1,0,4));
+ //std::cout<<sliced_a<<std::endl;
+ //std::cout<<Slice(0,1,1)<<std::endl;
+ **********************************************************************/
 /**********************************************************************/
  return 0;
 }
