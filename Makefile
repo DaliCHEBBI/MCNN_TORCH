@@ -15,7 +15,7 @@ cv.o: cv.cpp
 	/usr/bin/g++-9 $(LOPENCV_FLAGS) $(CFLAGS) -o cv.o -c cv.cpp $(LIBS_OPENCV)
 
 Census.o: Census.cu
-	nvcc -arch sm_75 -O3 -DNDEBUG --compiler-options '-fPIC' -o Census.o -c Census.cu $(CFLAGS) $(LDFLAGS_NVCC)
+	nvcc -arch sm_50 -O3 -DNDEBUG --compiler-options '-fPIC' -o Census.o -c Census.cu $(CFLAGS) $(LDFLAGS_NVCC)
 
 TestMainCpuGpu.o:TestMainCpuGpu.cpp  
 	/usr/bin/g++-9 $(LDFLAGS_CPP) $(CFLAGS) -o TestMainCpuGpu.o -c TestMainCpuGpu.cpp $(LIBS_TORCH)

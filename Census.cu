@@ -6,16 +6,33 @@
 #include <png++/image.hpp>
 #include <torch/torch.h>
 #include "Census.cuh"
+#include <ATen/ATen.h>
+#include <ATen/core/TensorAccessor.h>
+#include <ATen/cuda/CUDAContext.h>
+
+//#include <THC/THCAtomics.cuh>
+
 
 using namespace std;
 
 #define TB 128
 
+#define CUDA_CHECK(X)                                                          \
+  do {                                                                         \
+    cudaError_t err = X;                                                       \
+    if (err != cudaSuccess) {                                                  \
+      std::cerr << "CUDA error in " << __FILE__ << "(" << __LINE__             \
+                << "): " << cudaGetErrorString(err) << std::endl;              \
+      exit(EXIT_FAILURE);                                                      \
+    }                                                                          \
+  } while (0);
+  
 /**********checking error after kernel has been initiated *************/
 
 void checkCudaError(void) {
 	cudaError_t status = cudaPeekAtLastError();
-	if (status != cudaSuccess) {
+	cudaError_t err = cudaGetLastError();
+	if (status != cudaSuccess || err!=cudaSuccess) {
 		cudaGetErrorString(status);
 	}
 }
@@ -207,15 +224,52 @@ __global__ void cross(float *x0, float *out, int size, int dim2, int dim3, int L
 /***********************************************************************/
 void Cross(torch::Tensor x0, torch::Tensor out, int L1, float tau1)
 {
-	cross<<<(out.numel() - 1) / TB + 1, TB>>>(
-		x0.data_ptr<float>(),
-		out.data_ptr<float>(),
-		out.numel(),
-		out.size(2),
-		out.size(3),
-		L1, tau1);
+	//
+	int size_x0=sizeof(float)*x0.numel();
+	int size_out=sizeof(float)*out.numel();
+	
+	float *x00,*out00;
+	//Memory Allocation 
+	int num,size2,size3;
+	float L11,tau11;
+	
+	CUDA_CHECK(cudaMalloc(&x00,size_x0));
+	CUDA_CHECK(cudaMalloc(&out00,size_out));
+	
+
+	
+	// Copy data from cpu to GPU 
+	CUDA_CHECK(cudaMemcpy(x00  ,  x0.data_ptr<float>() ,size_x0 , cudaMemcpyHostToDevice));
+	CUDA_CHECK(cudaMemcpy(out00, out.data_ptr<float>() ,size_out, cudaMemcpyHostToDevice));
+	
+	tau11=tau1;
+	L11=L1;
+	
+	num=out.numel();
+	size2=out.size(2);
+	size3=out.size(3);
+	
+	
+	cross<<<(num - 1) / TB + 1, TB>>>(
+		x00,
+		out00,
+		num,
+		size2,
+		size3,
+		L11, tau11);
+		
+		
     std::cout<<"entered cross"<<std::endl;
 	checkCudaError();
+
+	//Copy Back data from device to host 
+	
+	
+	CUDA_CHECK(cudaMemcpy(out.data_ptr<float>(), out00, size_out, cudaMemcpyDeviceToHost));
+	
+	//Free Memory 
+	cudaFree(x00);
+	cudaFree(out00);
 	//return 0;
 }
 
@@ -258,18 +312,65 @@ __global__ void cbca(float *x0c, float *x1c, float *vol, float *out, int size, i
 /***********************************************************************/
 void CrBaCoAgg(torch::Tensor x0c, torch::Tensor x1c, torch::Tensor vol_in, torch::Tensor vol_out,  int direction)
 {
-	assert(direction == -1 or direction == 1);
-	cbca<<<(vol_out.numel() - 1) / TB + 1, TB>>>(
-		x0c.data_ptr<float>(),
-		x1c.data_ptr<float>(),
-		vol_in.data_ptr<float>(),
-		vol_out.data_ptr<float>(),
-		vol_out.numel(),
-		vol_out.size(2),
-		vol_out.size(3),
-		direction);
+	
+	float *x0cc,*x1cc,*vol_inn, *vol_outt;
+	int dir,num,size2,size3;
+	
+	int size_x0cc     = sizeof(float)*x0c.numel();
+	int size_x1cc     = sizeof(float)*x1c.numel();
+	int size_vol_inn  = sizeof(float)*vol_in.numel();
+	int size_vol_outt = sizeof(float)*vol_out.numel();
+	
+	
+	CUDA_CHECK(cudaMalloc(&x0cc,size_x0cc));
+	CUDA_CHECK(cudaMalloc(&x1cc,size_x1cc));
+	CUDA_CHECK(cudaMalloc(&vol_inn,size_vol_inn));
+	CUDA_CHECK(cudaMalloc(&vol_outt,size_vol_outt));
+	
+
+	// Copy data from cpu to GPU 
+	CUDA_CHECK(cudaMemcpy(x0cc     ,  x0c.data_ptr<float>() ,size_x0cc , cudaMemcpyHostToDevice));
+	CUDA_CHECK(cudaMemcpy(x1cc     ,  x1c.data_ptr<float>() ,size_x1cc, cudaMemcpyHostToDevice));
+	CUDA_CHECK(cudaMemcpy(vol_inn  ,  vol_in.data_ptr<float>() ,size_vol_inn, cudaMemcpyHostToDevice));
+	CUDA_CHECK(cudaMemcpy(vol_outt ,  vol_out.data_ptr<float>() ,size_vol_outt, cudaMemcpyHostToDevice));
+	
+	dir=direction;
+	num=vol_out.numel();
+	size2=vol_out.size(2);
+	size3=vol_out.size(3);
+	
+	
+	
+	assert(dir == -1 or dir == 1);
+	
+	
+	// Call to kernel 
+	
+	cbca<<<(num - 1) / TB + 1, TB>>>(
+		x0cc,
+		x1cc,
+		vol_inn,
+		vol_outt,
+		num,
+		size2,
+		size3,
+		dir);
+		
+		
 	checkCudaError();
 	//return 0;
+	
+	// Copy the necessary data and free memory 
+	
+	
+	CUDA_CHECK(cudaMemcpy(vol_out.data_ptr<float>(), vol_outt, size_vol_outt, cudaMemcpyDeviceToHost));
+	
+	//Free Memory 
+	cudaFree(x0cc);
+	cudaFree(x1cc);
+	cudaFree(vol_inn);
+	cudaFree(vol_outt);
+	
 }
 
 /***********************************************************************/
@@ -460,67 +561,122 @@ void sgm2(torch::Tensor x0, torch::Tensor x1, torch::Tensor input , torch::Tenso
      float pi1,float pi2, float tau_so, float alpha1, float sgm_q1, float sgm_q2, int direction
         )
 {
-	int size1 = output.size(1)* output.size(3);
-	int size2 = output.size(2) * output.size(3);
-	int disp_max = output.size(3);
 
-	for (int step = 0; step < input.size(2); step++) {
+	float *x00,*x11,*inputt, *outputt,*tmpp;
+	float pi11,pi22,tau_soo,alpha11,sgm_q11,sgm_q22;
+	int dir,size1,size2,disp_max;
+	
+	int size1In, size2In, size3In;
+	
+	int size_x00     = sizeof(float)*x0.numel();
+	int size_x11     = sizeof(float)*x1.numel();
+	int size_inputt  = sizeof(float)*input.numel();
+	int size_outputt = sizeof(float)*output.numel();
+	int size_tmpp    = sizeof(float)*tmp.numel();
+	
+	
+	CUDA_CHECK(cudaMalloc(&x00,size_x00));
+	CUDA_CHECK(cudaMalloc(&x11,size_x11));
+	CUDA_CHECK(cudaMalloc(&inputt,size_inputt));
+	CUDA_CHECK(cudaMalloc(&outputt,size_outputt));
+	CUDA_CHECK(cudaMalloc(&tmpp,size_tmpp));
+
+	
+	// Copy data from cpu to GPU 
+	CUDA_CHECK(cudaMemcpy(x00     ,  x0.data_ptr<float>() ,size_x00 , cudaMemcpyHostToDevice));
+	CUDA_CHECK(cudaMemcpy(x11     ,  x1.data_ptr<float>() ,size_x11, cudaMemcpyHostToDevice));
+	CUDA_CHECK(cudaMemcpy(inputt  ,  input.data_ptr<float>() ,size_inputt, cudaMemcpyHostToDevice));
+	CUDA_CHECK(cudaMemcpy(outputt ,  output.data_ptr<float>() ,size_outputt, cudaMemcpyHostToDevice));
+	CUDA_CHECK(cudaMemcpy(tmpp ,     tmp.data_ptr<float>() ,size_tmpp, cudaMemcpyHostToDevice));
+	
+	// Copy variables 
+	pi11     =pi1     ;
+	pi22     =pi2     ;
+	tau_soo  =tau_so  ;
+	alpha11  =alpha1  ;
+	sgm_q11  =sgm_q1  ;
+	sgm_q22  =sgm_q2  ;
+	dir     =direction;
+	
+	size1 = output.size(1)* output.size(3);
+	size2 = output.size(2) * output.size(3);
+	disp_max = output.size(3);
+	
+	// input 
+	size1In=input.size(1);
+	size2In=input.size(2);
+	size3In=input.size(3);
+
+	for (int step = 0; step < size2In; step++) {
 		sgm2<0><<<(size1 - 1) / disp_max + 1, disp_max>>>(
-			x0.data_ptr<float>(),
-			x1.data_ptr<float>(),
-			input.data_ptr<float>(),
-			output.data_ptr<float>(),
-			tmp.data_ptr<float>(),
-			pi1, pi2, tau_so, alpha1, sgm_q1, sgm_q2, direction,
-			input.size(1),
-			input.size(2),
-			input.size(3),
-			step);
-	}
-
-	for (int step = 0; step < input.size(2); step++) {
-		sgm2<1><<<(size1 - 1) / disp_max + 1, disp_max>>>(
-			x0.data_ptr<float>(),
-			x1.data_ptr<float>(),
-			input.data_ptr<float>(),
-			output.data_ptr<float>(),
-			tmp.data_ptr<float>(),
-			pi1, pi2, tau_so, alpha1, sgm_q1, sgm_q2, direction,
-			input.size(1),
-			input.size(2),
-			input.size(3),
-			step);
-	}
-
-	for (int step = 0; step < input.size(1); step++) {
-		sgm2<2><<<(size2 - 1) / disp_max + 1, disp_max>>>(
-			x0.data_ptr<float>(),
-			x1.data_ptr<float>(),
-			input.data_ptr<float>(),
-			output.data_ptr<float>(),
-			tmp.data_ptr<float>(),
-			pi1, pi2, tau_so, alpha1, sgm_q1, sgm_q2, direction,
-			input.size(1),
-			input.size(2),
-			input.size(3),
-			step);
-	}
-
-	for (int step = 0; step < input.size(1); step++) {
-		sgm2<3><<<(size2 - 1) / disp_max + 1, disp_max>>>(
-			x0.data_ptr<float>(),
-			x1.data_ptr<float>(),
-			input.data_ptr<float>(),
-			output.data_ptr<float>(),
-			tmp.data_ptr<float>(),
-			pi1, pi2, tau_so, alpha1, sgm_q1, sgm_q2, direction,
-			input.size(1),
-			input.size(2),
-			input.size(3),
+			x00,
+			x11,
+			inputt,
+			outputt,
+			tmpp,
+			pi11, pi22, tau_soo, alpha11, sgm_q11, sgm_q22, dir,
+			size1In,
+			size2In,
+			size3In,
 			step);
 	}
 
 	checkCudaError();
+	for (int step = 0; step < size2In; step++) {
+		sgm2<1><<<(size1 - 1) / disp_max + 1, disp_max>>>(
+			x00,
+			x11,
+			inputt,
+			outputt,
+			tmpp,
+			pi11, pi22, tau_soo, alpha11, sgm_q11, sgm_q22, dir,
+			size1In,
+			size2In,
+			size3In,
+			step);
+	}
+
+	checkCudaError();
+	for (int step = 0; step < size1In; step++) {
+		sgm2<2><<<(size2 - 1) / disp_max + 1, disp_max>>>(
+			x00,
+			x11,
+			inputt,
+			outputt,
+			tmpp,
+			pi11, pi22, tau_soo, alpha11, sgm_q11, sgm_q22, dir,
+			size1In,
+			size2In,
+			size3In,
+			step);
+	}
+
+	checkCudaError();
+	for (int step = 0; step < size1In; step++) {
+		sgm2<3><<<(size2 - 1) / disp_max + 1, disp_max>>>(
+			x00,
+			x11,
+			inputt,
+			outputt,
+			tmpp,
+			pi11, pi22, tau_soo, alpha11, sgm_q11, sgm_q22, dir,
+			size1In,
+			size2In,
+			size3In,
+			step);
+	}
+
+	checkCudaError();
+	
+	// copy back to host 
+	CUDA_CHECK(cudaMemcpy(output.data_ptr<float>(), outputt, size_outputt, cudaMemcpyDeviceToHost));
+	
+	//Free Memory 
+	cudaFree(x00);
+	cudaFree(x11);
+	cudaFree(inputt);
+	cudaFree(outputt);
+	cudaFree(tmpp);
 	//return 0;
 }
 
@@ -643,14 +799,45 @@ __global__ void outlier_detection(float *d0, float *d1, float *outlier, int size
 /***********************************************************************/
 void outlier_detection (torch::Tensor d0, torch::Tensor d1, torch::Tensor outlier, int disp_max)
 {
-	outlier_detection<<<(d0.numel() - 1) / TB + 1, TB>>>(
-		d0.data_ptr<float>(),
-		d1.data_ptr<float>(),
-		outlier.data_ptr<float>(),
-		d0.numel(),
-		d0.size(2),
-		disp_max);
+	float *d00,*d11,*outlierr;
+	int disparity,d0num,d0size2;
+	int size_d00=sizeof(float)*d0.numel();
+	int size_d11=sizeof(float)*d1.numel();
+	int size_outlierr=sizeof(float)*outlier.numel();
+	
+	CUDA_CHECK(cudaMalloc(&d00,size_d00));	
+	CUDA_CHECK(cudaMalloc(&d11,size_d11));	
+	CUDA_CHECK(cudaMalloc(&outlierr,size_outlierr));
+		
+
+	// Copy data from cpu to GPU 
+	CUDA_CHECK(cudaMemcpy(d00 , d0.data_ptr<float>() ,size_d00 , cudaMemcpyHostToDevice));
+	CUDA_CHECK(cudaMemcpy(d11 , d1.data_ptr<float>() ,size_d11 , cudaMemcpyHostToDevice));
+	CUDA_CHECK(cudaMemcpy(outlierr  ,  outlier.data_ptr<float>() ,size_outlierr , cudaMemcpyHostToDevice));
+	disparity=disp_max;
+
+	d0num=d0.numel();
+	d0size2=d0.size(3);
+
+	outlier_detection<<<(d0num - 1) / TB + 1, TB>>>(
+		d00,
+		d11,
+		outlierr,
+		d0num,
+		d0size2,
+		disparity);
+		
+
 	checkCudaError();
+
+	//CUDA_CHECK(cudaMemcpy(outlier.data_ptr<float>(), outlierr, size_outlierr, cudaMemcpyDeviceToHost));
+	CUDA_CHECK(cudaMemcpy(d0.data_ptr<float>(), d00, size_d00, cudaMemcpyDeviceToHost));
+	CUDA_CHECK(cudaMemcpy(d1.data_ptr<float>(), d11, size_d11, cudaMemcpyDeviceToHost));
+	CUDA_CHECK(cudaMemcpy(outlier.data_ptr<float>(), outlierr, size_outlierr, cudaMemcpyDeviceToHost));
+	//Free Memory 
+	cudaFree(d00);
+	cudaFree(d11);
+	cudaFree(outlierr);
 	//return 0;
 }
 
@@ -1049,23 +1236,125 @@ __global__ void StereoJoin_(float *input_L, float *input_R, float *output_L, flo
 }
 
 /************************************************************************/
-void StereoJoin(torch::Tensor input_L, torch::Tensor input_R, torch::Tensor output_L,torch::Tensor output_R)
+/*__global__ void packed_accessor_kernel( torch::PackedTensorAccessor64<float, 2> foo,
+    float* trace) 
+    {
+      int i = threadIdx.x;
+      gpuAtomicAdd(trace, foo[i][i]);
+    }*/
+    
+/*__global__ void vecAdd(int *A,int *B,int *C,int N)
 {
-	int size23 = output_L.size(1)*output_L.size(2);
-	int size1_input=input_L.size(0);
-	int size1  =output_L.size(0);
-	int size3  =output_L.size(2);
+   int i = blockIdx.x * blockDim.x + threadIdx.x;
+   C[i] = A[i] + B[i]; 
+}
+
+void  doVecAdd()
+{
+   int *a, *b;  // host data
+   int *c, *c2;  // results
+   //printf("Begin \n");
+   std::cout<<" begin vector addd"<<std::endl;
+   int n=10000000;
+   int nBytes = n*sizeof(int);
+   int block_size, block_no; 
+   a = (int *)malloc(nBytes);
+   b = (int *)malloc(nBytes);
+   c = (int *)malloc(nBytes);
+   c2 = (int *)malloc(nBytes);
+   int *a_d,*b_d,*c_d;
+   block_size=4000;
+   block_no = n/block_size;
+   dim3 dimBlock(block_size,1,1);
+   dim3 dimGrid(block_no,1,1);
+   for(int i=0;i<n;i++)
+      a[i]=i,b[i]=i;
+   std::cout<<"Allocating device memory on host."<<std::endl;;
+   cudaMalloc((void **)&a_d,n*sizeof(int));
+   cudaMalloc((void **)&b_d,n*sizeof(int));
+   cudaMalloc((void **)&c_d,n*sizeof(int));
+   std::cout<<"Copying to device"<<std::endl;
+   cudaMemcpy(a_d,a,n*sizeof(int),cudaMemcpyHostToDevice);
+   cudaMemcpy(b_d,b,n*sizeof(int),cudaMemcpyHostToDevice);
+   printf("Doing GPU Vector add\n");
+   vecAdd<<<block_no,block_size>>>(a_d,b_d,c_d,n);
+   cudaThreadSynchronize();
+   std::cout<<" end vector addd"<<std::endl;
+}
+*/
+/************************************************************************/
+__host__ int StereoJoin(torch::Tensor input_L, torch::Tensor input_R, torch::Tensor output_L,torch::Tensor output_R)
+{
+	int size23 = output_L.size(2)*output_L.size(3);
+	std::cout<<"SIZE 23 "<<size23<<std::endl;
+	int size1_input=input_L.size(1);
+	std::cout<<"SIZE 1 IN"<<size1_input<<std::endl;
+	int size1  =output_L.size(1);
+	std::cout<<"SIZE 1"<<size1<<std::endl;
+	int size3  =output_L.size(3);
+	//std::cout<<"SIZE 3"<<size3<<std::endl;
+	//sizes of data 
+	int size_InputL=sizeof(float)*input_L.numel();
+	int size_InputR=sizeof(float)*input_R.numel();
+	int size_outputL=sizeof(float)*output_L.numel();
+	int size_outputR=sizeof(float)*output_R.numel();
+	std::cout<<size_InputL<<"  "<<size_InputR<<"  "<<size_outputL<<"  "<<size_outputR<<std::endl;
+	float *inpL,*inpR,*outL,*outR;
+	//Memory Allocation 
+	
+	
+	CUDA_CHECK(cudaMalloc(&inpL,size_InputL));
+	CUDA_CHECK(cudaMalloc(&inpR,size_InputR));
+	CUDA_CHECK(cudaMalloc(&outL,size_outputL));
+	CUDA_CHECK(cudaMalloc(&outR,size_outputR));
+	
+    /*float *INPUTL = reinterpret_cast<float*> (input_L.data_ptr());
+    float *INPUTR = reinterpret_cast<float*> (input_R.data_ptr());
+    float *OUTPUTL = reinterpret_cast<float*>(output_L.data_ptr());
+    float *OUTPUTR = reinterpret_cast<float*>(output_R.data_ptr());*/
+	
+	std::cout<<" is contiguious "<<input_L.is_contiguous()<<std::endl;
+	std::cout<<" is contiguious "<<input_R.is_contiguous()<<std::endl;
+	std::cout<<" is contiguious "<<output_L.is_contiguous()<<std::endl;
+	std::cout<<" is contiguious "<<output_R.is_contiguous()<<std::endl;
+	
+	// Copy data from cpu to GPU 
+	CUDA_CHECK(cudaMemcpy(inpL,input_L.data_ptr() , size_InputL, cudaMemcpyHostToDevice));
+	CUDA_CHECK(cudaMemcpy(inpR, input_R.data_ptr(), size_InputR, cudaMemcpyHostToDevice));
+	CUDA_CHECK(cudaMemcpy(outL, output_L.data_ptr(), size_outputL, cudaMemcpyHostToDevice));
+	CUDA_CHECK(cudaMemcpy(outR, output_R.data_ptr(), size_outputR, cudaMemcpyHostToDevice));
+	
+	
 	StereoJoin_<<<(size23 - 1) / TB + 1, TB>>>(
-		input_L.data_ptr<float>(),
-		input_R.data_ptr<float>(),
-		output_L.data_ptr<float>(),
-		output_R.data_ptr<float>(),
+		inpL,
+		inpR,
+		outL,
+		outR,
 		size1_input,
 		size1,
 		size3,
 		size23);
+		
+    //C10_CUDA_KERNEL_LAUNCH_CHECK();
+    //assert(cudaSuccess == cudaDeviceSynchronize());
+
+    //std::cout<<"is synched "<<cudaDeviceSynchronize()<<std::endl;
 	checkCudaError();
-	//return 0;
+
+	std::cout<<"entered stereo join "<<std::endl;
+	
+	//Copy Back data from device to host 
+	
+	
+	CUDA_CHECK(cudaMemcpy(output_L.data_ptr(), outL, size_outputL, cudaMemcpyDeviceToHost));
+	CUDA_CHECK(cudaMemcpy(output_R.data_ptr(), outR, size_outputR, cudaMemcpyDeviceToHost));
+	
+	//Free Memory 
+	cudaFree(inpL);
+	cudaFree(inpR);
+	cudaFree(outL);
+	cudaFree(outR);
+	return 0;
 }
 /************************************************************************/
 

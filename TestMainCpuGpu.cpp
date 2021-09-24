@@ -277,8 +277,8 @@ size_t data_size, torch::Device device,Options opt)
 	X_batch.index_put_({1},Dataset.mX1_right_Dataset.index({indexIm-1})); // May ll add img_width to avoid "out_of_range"  ^^^^^^^^^
 	//*******+++++++++ I think i need to synchronize with GPU Later 
 	// SHOW IMAGES  
-	//showTensor<float> (X_batch.slice(0,0,1,1),2,3);
-	//showTensor<float> (X_batch.slice(0,1,2,1),2,3);
+	showTensor<float> (X_batch.slice(0,0,1,1),2,3);
+	showTensor<float> (X_batch.slice(0,1,2,1),2,3);
 	std::cout<<"testing code at level predict  "<<std::endl;
 	pred=this->predict(X_batch,NetworkTe,opt.disp_max,device,opt);   // This will bug no size defined for the tensor          ^^^^^^^^^
 	std::cout<<"testing code at level after predict presque impossible "<<std::endl;
@@ -292,7 +292,7 @@ size_t data_size, torch::Device device,Options opt)
 	torch::Tensor mask=torch::zeros(actualGT.sizes(),torch::TensorOptions().dtype(torch::kBool).device(device));
 	std::cout<<"mask declaration "<<std::endl;
 	mask=actualGT.ne(0.0);              // To check accordingly !!!!!!!!!!!!!!!!!!
-	showTensorMask(mask,1,2);
+	//showTensorMask(mask,1,2);
 	actualGT.sub(pred).abs();
 	pred_bad=actualGT.gt(opt.err_at).mul(mask);                                        // To check accordingly !!!!!!!!!!!!!!!!!! 
 	pred_good=actualGT.le(opt.err_at).mul(mask);
@@ -313,8 +313,18 @@ torch::Tensor SimilarityLearner::predict(torch::Tensor X_batch, ConvNet_Fast Net
    auto output=Network->forward_but_Last(X_batch);
    std::cout<<"ouput of network sizes "<<output.sizes()<<std::endl;
    torch::Tensor vols = torch::empty({2, disp_max, X_batch.size(2), X_batch.size(3)},torch::TensorOptions().dtype(torch::kFloat32).device(device));
-	std::cout<<"testing code at level before stereo join "<<std::endl;
-   StereoJoin(output.index({0}), output.index({1}), vols.index({0}), vols.index({1}));  // implemented in cuda !!!!!!!+++++++
+   std::cout<<"testing code at level before stereo join "<<std::endl;
+   cudaDeviceSynchronize();
+   //auto volL= vols.slice(0,0,1,1);
+   //auto volR= vols.slice(0,1,2,1);
+   //auto impL= vols.slice(0,0,1,1);
+   //auto impR= vols.slice(0,1,2,1);
+   //doVecAdd();
+   StereoJoin(output.slice(0,0,1,1), output.slice(0,1,2,1), vols.slice(0,0,1,1), vols.slice(0,1,2,1));  // implemented in cuda !!!!!!!+++++++
+   //StereoJoin(impL, impR, volL, volR);  // implemented in cuda !!!!!!!+++++++
+   cudaDeviceSynchronize();
+	showTensor<float> (output.slice(1,10,15,1),2,3);
+	showTensor<float> (vols.slice(0,1,2,1).slice(1,40,41,1),2,3);
 	std::cout<<"testing code at level after stereo join  "<<std::endl;
 	std::cout<<"volumes sizes of slices "<<vols.slice(0,1,2,1).sizes()<<std::endl;
    this->fix_border(Network,  vols.slice(0,0,1,1), -1);             // fix_border to implement !!!!!!!!!
@@ -381,17 +391,17 @@ torch::Tensor SimilarityLearner::predict(torch::Tensor X_batch, ConvNet_Fast Net
       std::cout<<"disparity map dimensions "<<disp.sizes()<<std::endl;
       outlier_detection(disp.slice(0,1,2,1), disp.slice(0,1,1,1), outlier, disp_max);
       std::cout<<"outlier detection done !"<<std::endl;
-      interpolate_occlusion(disp.slice(0,1,2,1), outlier,out);       // CHECK THIS UP !!!!!!!!!!!!!!!
+      //interpolate_occlusion(disp.slice(0,1,2,1), outlier,out);       // CHECK THIS UP !!!!!!!!!!!!!!!
       std::cout<<"intepolate occlusion done !"<<std::endl;
-      interpolate_mismatch(out, outlier,out2);                        // CHECK THIS UP !!!!!!!!!!!!!!!
+      //interpolate_mismatch(out, outlier,out2);                        // CHECK THIS UP !!!!!!!!!!!!!!!
       std::cout<<" Mismatch interpolation done !"<<std::endl;
-      subpixel_enchancement(out2, vol, out3, disp_max);                 // CHECK THIS UO !!!!!!!!!!!!!!!
+      //subpixel_enchancement(out2, vol, out3, disp_max);                 // CHECK THIS UO !!!!!!!!!!!!!!!
       std::cout<<"sub pixel enhhancement done !"<<std::endl;
-      median2d(out3,out4,5);            
+      //median2d(out3,out4,5);            
       std::cout<<"Median 2 done !"<<std::endl;                              // CHECK THIS UO !!!!!!!!!!!!!!!
-      mean2d(out4, gaussian(opt.blur_sigma), out5, opt.blur_t);         // CHECK THIS UO !!!!!!!!!!!!!!!  GAUSSIAN
+      //mean2d(out4, gaussian(opt.blur_sigma), out5, opt.blur_t);         // CHECK THIS UO !!!!!!!!!!!!!!!  GAUSSIAN
    std::cout<<"  filtering has beeen realized "<<std::endl;
-   return out5;
+   return disp.slice(0,1,2,1);
 }
 /**********************************************************************/
 /***********************************************************************/
@@ -451,7 +461,7 @@ int main(int argc, char **argv) {
          opt.d_contrast   =1;
          opt.height       = 1024;
          opt.width        = 1024;
-         opt.disp_max     = 192;
+         opt.disp_max     = 100;
          opt.n_te         = 0;
          opt.n_input_plane= 1;
 	  }
@@ -610,7 +620,7 @@ int main(int argc, char **argv) {
   }
   //********************Reading Training and Testing Data**************\\
   // Get Tensors names : have been saved before for data preparation
-  std::string Datapath="./DataExample/";
+  std::string Datapath="./DataExample2/";
   std::string X0_left_Dataset=Datapath+"x0.bin";
   std::string X1_right_Dataset=Datapath+"x1.bin";
   std::string dispnoc_Data=Datapath+"dispnoc.bin";
@@ -623,10 +633,12 @@ int main(int argc, char **argv) {
   // STEREO DATASET
   /********************************************************************/
   // Device
+  //torch::cuda::Tensor aaa=torch::zeros(2);at::cuda::is_available()
   auto cuda_available = torch::cuda::is_available();
   torch::Device device(cuda_available ? torch::kCUDA : torch::kCPU);
   std::cout << (cuda_available ? "CUDA available. Training on GPU." : "Training on CPU.") << '\n';
   /********************************************************************/ 
+  //device=torch::kCUDA ;
   printArgs(opt);
   
   ConvNet_Fast Network(3,opt.ll1);
@@ -659,11 +671,11 @@ int main(int argc, char **argv) {
   torch::optim::SGD optimizer(
       Network->parameters(), torch::optim::SGDOptions(0.001).momentum(0.5)); 
   
- Network->to(device);
+ /*Network->to(device);
  for (int epoch=0;epoch<num_epochs;epoch++)
  {
     SimilarityLearn.train(Network, train_loader,optimizer, epoch,num_train_samples,opt.bs, 20,device); // 20 means a display of results in a periodic fashion
- }
+ }*/
  
  std::string fileName=std::string(argv[5])+std::string("/net_")+std::string(argv[1])+std::string("_")+std::string(argv[2])+std::string("_")+std::to_string(num_epochs)+std::string(".pt");
  //SimilarityLearn.Save_Network(Network,fileName);
@@ -673,7 +685,7 @@ int main(int argc, char **argv) {
  
  std::string outputfileName=std::string(argv[5])+std::string("/net_")+std::string(argv[1])+std::string("_")+std::string(argv[2])+std::string("_")+std::to_string(num_epochs)+std::string(".pt");
  
- //ConvNet_Fast TestNetwork(3,opt.ll1);
+ //****++++++ConvNet_Fast TestNetwork(3,opt.ll1);
  
  /**********************************************************************/
  
@@ -687,9 +699,14 @@ int main(int argc, char **argv) {
  //TestNetwork= std::dynamic_pointer_cast<ConvNet_Fast>(copy);
  //TestNetwork= Network->clone();
  //TestNetwork->createModel(opt.fm,opt.ll1,opt.n_input_plane,3);
+ //****++++++auto FastNetworkTrained=TestNetwork->getFastSequential();
+ //****++++++torch::load(FastNetworkTrained,"net_vahingen_fast_-a_train_tr_14.t7");
+
+ //std::cout<<" Trained network >>>>> "<<FastNetworkTrained<<std::endl;
  //SimilarityLearn.Load_Network(TestNetwork,outputfileName);
   
-  //torch::load(TestNetwork,outputfileName);
+  //torch::load(TestNetwork,outputfileName);  net_vahingen_fast_-a_train_tr_14
+ 
  
  // Need to change padding to value 1 so output image will keep the same size as the input 
  auto Fast=Network->getFastSequential(); 
