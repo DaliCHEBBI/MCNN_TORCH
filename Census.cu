@@ -10,12 +10,11 @@
 #include <ATen/core/TensorAccessor.h>
 #include <ATen/cuda/CUDAContext.h>
 
-//#include <THC/THCAtomics.cuh>
 
 
 using namespace std;
 
-#define TB 128
+#define TB 1024
 
 #define CUDA_CHECK(X)                                                          \
   do {                                                                         \
@@ -231,7 +230,8 @@ void Cross(torch::Tensor x0, torch::Tensor out, int L1, float tau1)
 	float *x00,*out00;
 	//Memory Allocation 
 	int num,size2,size3;
-	float L11,tau11;
+	int L11=L1;
+	float tau11=tau1;
 	
 	CUDA_CHECK(cudaMalloc(&x00,size_x0));
 	CUDA_CHECK(cudaMalloc(&out00,size_out));
@@ -241,9 +241,6 @@ void Cross(torch::Tensor x0, torch::Tensor out, int L1, float tau1)
 	// Copy data from cpu to GPU 
 	CUDA_CHECK(cudaMemcpy(x00  ,  x0.data_ptr<float>() ,size_x0 , cudaMemcpyHostToDevice));
 	CUDA_CHECK(cudaMemcpy(out00, out.data_ptr<float>() ,size_out, cudaMemcpyHostToDevice));
-	
-	tau11=tau1;
-	L11=L1;
 	
 	num=out.numel();
 	size2=out.size(2);
@@ -258,7 +255,7 @@ void Cross(torch::Tensor x0, torch::Tensor out, int L1, float tau1)
 		size3,
 		L11, tau11);
 		
-		
+	cudaDeviceSynchronize();
     std::cout<<"entered cross"<<std::endl;
 	checkCudaError();
 
@@ -356,7 +353,7 @@ void CrBaCoAgg(torch::Tensor x0c, torch::Tensor x1c, torch::Tensor vol_in, torch
 		size3,
 		dir);
 		
-		
+	cudaDeviceSynchronize();
 	checkCudaError();
 	//return 0;
 	
@@ -587,7 +584,7 @@ void sgm2(torch::Tensor x0, torch::Tensor x1, torch::Tensor input , torch::Tenso
 	CUDA_CHECK(cudaMemcpy(x11     ,  x1.data_ptr<float>() ,size_x11, cudaMemcpyHostToDevice));
 	CUDA_CHECK(cudaMemcpy(inputt  ,  input.data_ptr<float>() ,size_inputt, cudaMemcpyHostToDevice));
 	CUDA_CHECK(cudaMemcpy(outputt ,  output.data_ptr<float>() ,size_outputt, cudaMemcpyHostToDevice));
-	CUDA_CHECK(cudaMemcpy(tmpp ,     tmp.data_ptr<float>() ,size_tmpp, cudaMemcpyHostToDevice));
+	CUDA_CHECK(cudaMemcpy(tmpp    ,     tmp.data_ptr<float>() ,size_tmpp, cudaMemcpyHostToDevice));
 	
 	// Copy variables 
 	pi11     =pi1     ;
@@ -620,7 +617,7 @@ void sgm2(torch::Tensor x0, torch::Tensor x1, torch::Tensor input , torch::Tenso
 			size3In,
 			step);
 	}
-
+	
 	checkCudaError();
 	for (int step = 0; step < size2In; step++) {
 		sgm2<1><<<(size1 - 1) / disp_max + 1, disp_max>>>(
@@ -831,9 +828,12 @@ void outlier_detection (torch::Tensor d0, torch::Tensor d1, torch::Tensor outlie
 	checkCudaError();
 
 	//CUDA_CHECK(cudaMemcpy(outlier.data_ptr<float>(), outlierr, size_outlierr, cudaMemcpyDeviceToHost));
+
 	CUDA_CHECK(cudaMemcpy(d0.data_ptr<float>(), d00, size_d00, cudaMemcpyDeviceToHost));
 	CUDA_CHECK(cudaMemcpy(d1.data_ptr<float>(), d11, size_d11, cudaMemcpyDeviceToHost));
 	CUDA_CHECK(cudaMemcpy(outlier.data_ptr<float>(), outlierr, size_outlierr, cudaMemcpyDeviceToHost));
+	
+	
 	//Free Memory 
 	cudaFree(d00);
 	cudaFree(d11);
@@ -955,15 +955,39 @@ __global__ void interpolate_mismatch(float *d0, float *outlier, float *out, int 
 
 void interpolate_mismatch(torch::Tensor d0, torch::Tensor outlier, torch::Tensor out)
 {
+	float *d00,*outlierr,*outt;
+	int size_d00=sizeof(float)*d0.numel();
+	int size_outlierr=sizeof(float)*outlier.numel();
+	int size_outt=sizeof(float)*out.numel();
+	
+	
+	CUDA_CHECK(cudaMalloc(&d00,size_d00));
+	CUDA_CHECK(cudaMalloc(&outlierr,size_outlierr));
+	CUDA_CHECK(cudaMalloc(&outt,size_outt));
+		
+
+	// Copy data from cpu to GPU 
+	CUDA_CHECK(cudaMemcpy(d00 , d0.data_ptr<float>() ,size_d00 , cudaMemcpyHostToDevice));
+	CUDA_CHECK(cudaMemcpy(outlierr , outlier.data_ptr<float>() ,size_outlierr , cudaMemcpyHostToDevice));
+	CUDA_CHECK(cudaMemcpy(outt , out.data_ptr<float>() ,size_outt , cudaMemcpyHostToDevice));
+	
+	
 	interpolate_mismatch<<<(out.numel() - 1) / TB + 1, TB>>>(
-		d0.data_ptr<float>(),
-		outlier.data_ptr<float>(),
-		out.data_ptr<float>(),
+		d00,
+		outlierr,
+		outt,
 		out.numel() ,
-		out.size(1),
-		out.size(2));
+		out.size(2),
+		out.size(3));
 
 	checkCudaError();
+	
+	CUDA_CHECK(cudaMemcpy(outlier.data_ptr<float>(), outlierr , size_outlierr , cudaMemcpyDeviceToHost));
+	CUDA_CHECK(cudaMemcpy(out.data_ptr<float>(), outt , size_outt , cudaMemcpyDeviceToHost));
+	
+	cudaFree(outt);
+	cudaFree(outlierr);
+	cudaFree(d00);
 	//return 1;
 }
 
@@ -997,15 +1021,37 @@ __global__ void interpolate_occlusion(float *d0, float *outlier, float *out, int
 
 void interpolate_occlusion(torch::Tensor d0, torch::Tensor outlier,torch::Tensor out)
 {
+	float *d00,*outlierr,*outt;
+	int size_d00=sizeof(float)*d0.numel();
+	int size_outlierr=sizeof(float)*outlier.numel();
+	int size_outt=sizeof(float)*out.numel();
+	
+	
+	CUDA_CHECK(cudaMalloc(&d00,size_d00));
+	CUDA_CHECK(cudaMalloc(&outlierr,size_outlierr));
+	CUDA_CHECK(cudaMalloc(&outt,size_outt));
+		
+
+	// Copy data from cpu to GPU 
+	CUDA_CHECK(cudaMemcpy(d00 , d0.data_ptr<float>() ,size_d00 , cudaMemcpyHostToDevice));
+	CUDA_CHECK(cudaMemcpy(outlierr , outlier.data_ptr<float>() ,size_outlierr , cudaMemcpyHostToDevice));
+	CUDA_CHECK(cudaMemcpy(outt , out.data_ptr<float>() ,size_outt , cudaMemcpyHostToDevice));
+	
 	interpolate_occlusion<<<(out.numel() - 1) / TB + 1, TB>>>(
-		d0.data_ptr<float>(),
-		outlier.data_ptr<float>(),
-		out.data_ptr<float>(),
+		d00,
+		outlierr,
+		outt,
 		out.numel(),
-		out.size(2)
+		out.size(3)
 	);
 	checkCudaError();
 	//return 1;
+	CUDA_CHECK(cudaMemcpy(outlier.data_ptr<float>(), outlierr , size_outlierr , cudaMemcpyDeviceToHost));
+	CUDA_CHECK(cudaMemcpy(out.data_ptr<float>(), outt , size_outt , cudaMemcpyDeviceToHost));
+	
+	cudaFree(outt);
+	cudaFree(outlierr);
+	cudaFree(d00);
 }
 
 
@@ -1064,15 +1110,39 @@ __global__ void subpixel_enchancement(float *d0, float *c2, float *out, int size
 
 void subpixel_enchancement(torch::Tensor d0, torch::Tensor c2, torch::Tensor out, int disp_max) {
 
+	float *d00,*c22,*outt;
+	
+	int size_d00=sizeof(float)*d0.numel();
+	int size_c22=sizeof(float)*c2.numel();
+	int size_outt=sizeof(float)*out.numel();
+	
+	
+	CUDA_CHECK(cudaMalloc(&d00,size_d00));
+	CUDA_CHECK(cudaMalloc(&c22,size_c22));
+	CUDA_CHECK(cudaMalloc(&outt,size_outt));
+		
+
+	// Copy data from cpu to GPU 
+	CUDA_CHECK(cudaMemcpy(d00 , d0.data_ptr<float>() ,size_d00 , cudaMemcpyHostToDevice));
+	CUDA_CHECK(cudaMemcpy(c22 , c2.data_ptr<float>() ,size_c22 , cudaMemcpyHostToDevice));
+	CUDA_CHECK(cudaMemcpy(outt , out.data_ptr<float>() ,size_outt , cudaMemcpyHostToDevice));
+	
+	
 	subpixel_enchancement<<<(out.numel() - 1) / TB + 1, TB>>>(
-		d0.data_ptr<float>(),
-		c2.data_ptr<float>(),
-		out.data_ptr<float>(),
+		d00,
+		c22,
+		outt,
 		out.numel(),
-		out.size(1)* out.size(2),
+		out.size(2)* out.size(3),
 		disp_max);
 	checkCudaError();
-	//return 1;
+	
+	CUDA_CHECK(cudaMemcpy(out.data_ptr<float>(), outt , size_outt , cudaMemcpyDeviceToHost));
+	
+	cudaFree(outt);
+	cudaFree(c22);
+	cudaFree(d00);
+	
 }
 
 __global__ void mean2d(float *img, float *kernel, float *out, int size, int kernel_radius, int dim2, int dim3, float alpha2)
@@ -1100,17 +1170,40 @@ __global__ void mean2d(float *img, float *kernel, float *out, int size, int kern
 
 void mean2d(torch::Tensor img, torch::Tensor kernel, torch::Tensor out, float alpha2) {
 	assert(kernel.size(0) % 2 == 1);
+	
+	float *imgg,*outt,*kernell;
+	int size_imgg=sizeof(float)*img.numel();
+	int size_outt=sizeof(float)*out.numel();
+	int size_kern=sizeof(float)*kernel.numel();
+	
+	CUDA_CHECK(cudaMalloc(&imgg,size_imgg));
+	CUDA_CHECK(cudaMalloc(&outt,size_outt));
+	CUDA_CHECK(cudaMalloc(&kernell,size_kern));
+		
+
+	// Copy data from cpu to GPU 
+	CUDA_CHECK(cudaMemcpy(imgg , img.data_ptr<float>() ,size_imgg , cudaMemcpyHostToDevice));
+	CUDA_CHECK(cudaMemcpy(outt , out.data_ptr<float>() ,size_outt , cudaMemcpyHostToDevice));
+	CUDA_CHECK(cudaMemcpy(kernell , kernel.data_ptr<float>() ,size_kern , cudaMemcpyHostToDevice));
+	
+	
 	mean2d<<<(out.numel() - 1) / TB + 1, TB>>>(
-		img.data_ptr<float>(),
-		kernel.data_ptr<float>(),
-		out.data_ptr<float>(),
+		imgg,
+		kernell,
+		outt,
 		out.numel(),
 		kernel.size(0) / 2,
-		out.size(1),
 		out.size(2),
+		out.size(3),
 		alpha2);
 	checkCudaError();
+	
+	CUDA_CHECK(cudaMemcpy(out.data_ptr<float>(), outt , size_outt , cudaMemcpyDeviceToHost));
+
 	//return 1;
+	cudaFree(imgg);
+	cudaFree(kernell);
+	cudaFree(outt);
 }
 
 __global__ void Normalize_get_norm_(float *input, float *norm, int size1, int size23, int size023)
@@ -1214,6 +1307,7 @@ template <class Op> __global__ void Margin2_(float *input, float *tmp, float *gr
 __global__ void StereoJoin_(float *input_L, float *input_R, float *output_L, float *output_R, int size1_input, int size1, int size3, int size23)
 {
 	int id = blockIdx.x * blockDim.x + threadIdx.x;
+	//printf("%d \n",id);
 	if (id < size23) {
 		int dim3 = id % size3;
 		assert(size1_input <= 128);
@@ -1236,54 +1330,7 @@ __global__ void StereoJoin_(float *input_L, float *input_R, float *output_L, flo
 }
 
 /************************************************************************/
-/*__global__ void packed_accessor_kernel( torch::PackedTensorAccessor64<float, 2> foo,
-    float* trace) 
-    {
-      int i = threadIdx.x;
-      gpuAtomicAdd(trace, foo[i][i]);
-    }*/
-    
-/*__global__ void vecAdd(int *A,int *B,int *C,int N)
-{
-   int i = blockIdx.x * blockDim.x + threadIdx.x;
-   C[i] = A[i] + B[i]; 
-}
-
-void  doVecAdd()
-{
-   int *a, *b;  // host data
-   int *c, *c2;  // results
-   //printf("Begin \n");
-   std::cout<<" begin vector addd"<<std::endl;
-   int n=10000000;
-   int nBytes = n*sizeof(int);
-   int block_size, block_no; 
-   a = (int *)malloc(nBytes);
-   b = (int *)malloc(nBytes);
-   c = (int *)malloc(nBytes);
-   c2 = (int *)malloc(nBytes);
-   int *a_d,*b_d,*c_d;
-   block_size=4000;
-   block_no = n/block_size;
-   dim3 dimBlock(block_size,1,1);
-   dim3 dimGrid(block_no,1,1);
-   for(int i=0;i<n;i++)
-      a[i]=i,b[i]=i;
-   std::cout<<"Allocating device memory on host."<<std::endl;;
-   cudaMalloc((void **)&a_d,n*sizeof(int));
-   cudaMalloc((void **)&b_d,n*sizeof(int));
-   cudaMalloc((void **)&c_d,n*sizeof(int));
-   std::cout<<"Copying to device"<<std::endl;
-   cudaMemcpy(a_d,a,n*sizeof(int),cudaMemcpyHostToDevice);
-   cudaMemcpy(b_d,b,n*sizeof(int),cudaMemcpyHostToDevice);
-   printf("Doing GPU Vector add\n");
-   vecAdd<<<block_no,block_size>>>(a_d,b_d,c_d,n);
-   cudaThreadSynchronize();
-   std::cout<<" end vector addd"<<std::endl;
-}
-*/
-/************************************************************************/
-__host__ int StereoJoin(torch::Tensor input_L, torch::Tensor input_R, torch::Tensor output_L,torch::Tensor output_R)
+ int StereoJoin(torch::Tensor input_L, torch::Tensor input_R, torch::Tensor output_L,torch::Tensor output_R)
 {
 	int size23 = output_L.size(2)*output_L.size(3);
 	std::cout<<"SIZE 23 "<<size23<<std::endl;
@@ -1335,8 +1382,7 @@ __host__ int StereoJoin(torch::Tensor input_L, torch::Tensor input_R, torch::Ten
 		size3,
 		size23);
 		
-    //C10_CUDA_KERNEL_LAUNCH_CHECK();
-    //assert(cudaSuccess == cudaDeviceSynchronize());
+    cudaDeviceSynchronize();
 
     //std::cout<<"is synched "<<cudaDeviceSynchronize()<<std::endl;
 	checkCudaError();
@@ -1425,16 +1471,36 @@ __global__ void median2d(float *img, float *out, int size, int dim2, int dim3, i
 
 /***********************************************************************/
 void median2d(torch::Tensor img, torch::Tensor out, int kernel_size) {
+	
 	assert(kernel_size % 2 == 1);
 	assert(kernel_size <= 11);
+	
+	float *imgg,*outt;
+	
+	int size_imgg=sizeof(float)*img.numel();
+	int size_outt=sizeof(float)*out.numel();
+	
+	
+	CUDA_CHECK(cudaMalloc(&imgg,size_imgg));
+	CUDA_CHECK(cudaMalloc(&outt,size_outt));
+		
+
+	// Copy data from cpu to GPU 
+	CUDA_CHECK(cudaMemcpy(imgg , img.data_ptr<float>() ,size_imgg , cudaMemcpyHostToDevice));
+	CUDA_CHECK(cudaMemcpy(outt , out.data_ptr<float>() ,size_outt , cudaMemcpyHostToDevice));
+	
+	
 	median2d<<<(out.numel() - 1) / TB + 1, TB>>>(
-		img.data_ptr<float>(),
-		out.data_ptr<float>(),
+		imgg,
+		outt,
 		out.numel(),
-		out.size(1),
 		out.size(2),
+		out.size(3),
 		kernel_size / 2);
 	checkCudaError();
+	CUDA_CHECK(cudaMemcpy(out.data_ptr<float>(),outt ,size_outt , cudaMemcpyDeviceToHost));
+	cudaFree(imgg);
+	cudaFree(outt);
 	//return 1;
 }
 /***********************************************************************/

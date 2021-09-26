@@ -63,7 +63,7 @@ void interpolate_mismatch(torch::Tensor d0, torch::Tensor outlier, torch::Tensor
 void interpolate_occlusion(torch::Tensor d0, torch::Tensor outlier,torch::Tensor out);
 void subpixel_enchancement(torch::Tensor d0, torch::Tensor c2, torch::Tensor out, int disp_max) ;
 void mean2d(torch::Tensor img, torch::Tensor kernel, torch::Tensor out, float alpha2);
-__host__ int StereoJoin(torch::Tensor input_L, torch::Tensor input_R, torch::Tensor output_L,torch::Tensor output_R);
+ int StereoJoin(torch::Tensor input_L, torch::Tensor input_R, torch::Tensor output_L,torch::Tensor output_R);
 void median2d(torch::Tensor img, torch::Tensor out, int kernel_size);
 
 
