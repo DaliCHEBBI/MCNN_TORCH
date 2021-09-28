@@ -119,6 +119,7 @@ void showTensorMask(torch::Tensor a,int dim1, int dim2)
 
 	cv::Mat Output=cv::Mat(a.size(dim1),a.size(dim2),CV_32FC1,a.data_ptr<bool>());
 	cv::imshow("Mask",Output);
+	savePFM(Output,"./mask.pfm");
 	cv::waitKey(0);
 }
 void ReadBinaryFile(std::string filename, torch::Tensor Host)
@@ -202,21 +203,6 @@ public:
 		void  test  (StereoDataset Dataset,ConvNet_Fast Network,size_t data_size, torch::Device device, Options opt);
 		torch::Tensor predict(torch::Tensor X_batch, ConvNet_Fast Network,int disp_max,torch::Device device, 
                               Options opt);
-		// All postprocessing Steps Stereo-Method
-		// Cross-based cost aggregation 
-		//***+++++void StereoJoin(torch::Tensor left, torch::Tensor right, torch::Tensor *VolLeft, torch::Tensor *volRight);
-		//***+++++void Cross(torch::Tensor x_batch, torch::Tensor * x0c, float L1, float tau1);
-		//***+++++void CrBaCoAgg(torch::Tensor x0c, torch::Tensor x1c, torch::Tensor vol, torch::Tensor tmp_cbca,int  direction);
-        //***+++++void sgm2(torch::Tensor x_batch1, torch::Tensor x_batch2, torch::Tensor vol,torch::Tensor out,torch::Tensor tmp,
-        //***+++++          float pi1, float pi2, float tau_so, float alpha1, float sgm_q1, float sgm_q2, int direction);
-        //***+++++void sgm3(torch::Tensor x_batch1,torch::Tensor x_batch2,torch::Tensor vol,torch::Tensor out,float pi1,
-        //***+++++          float pi2,float tau_so,float alpha1,float sgm_q1,float sgm_q2,float direction);
-        //***+++++void outlier_detection(torch::Tensor disp2,torch::Tensor disp1,torch::Tensor outlier,int disp_max);
-        //***+++++torch::Tensor interpolate_occlusion(torch::Tensor disp2, torch::Tensor outlier);
-        //***+++++torch::Tensor interpolate_mismatch(torch::Tensor disp2,torch::Tensor outlier);
-        //***+++++torch::Tensor subpixel_enchancement(torch::Tensor disp2,torch::Tensor vol,int disp_max);
-        //***+++++torch::Tensor median2d(torch::Tensor disp2, int filersize);
-        //***+++++torch::Tensor mean2d(torch::Tensor disp2, torch::Tensor GaussKern, float blur_t);
         void Save_Network(ConvNet_Fast Network, std::string fileName);
         torch::Tensor gaussian(float blur_sigma);
         int GetWindowSize(ConvNet_Fast &Network);
@@ -410,12 +396,14 @@ size_t data_size, torch::Device device,Options opt)
     std::cout<<"Predicted disparity map "<<pred.sizes()<<std::endl;
 	torch::Tensor actualGT=Dataset.mdispnoc.index({indexIm-1});            // May ll add img_width to avoid "out_of_range" ^^^^^^^^^
 	showTensor<float> (actualGT,1,2,"ground truth");
+	//std::cout<<"actual ground truth "<<actualGT<<std::endl;
 	std::cout<<"actual gt size "<<actualGT.sizes()<<std::endl;
 	pred_good=torch::empty(actualGT.sizes(),torch::TensorOptions().dtype(torch::kFloat32).device(device));
 	pred_bad=torch::empty(actualGT.sizes(),torch::TensorOptions().dtype(torch::kFloat32).device(device));
 	torch::Tensor mask=torch::zeros(actualGT.sizes(),torch::TensorOptions().dtype(torch::kBool).device(device));
 	std::cout<<"mask declaration "<<std::endl;
 	mask=actualGT.ne(0.0);              // To check accordingly !!!!!!!!!!!!!!!!!!
+	//std::cout<<"mask"<<mask<<std::endl;
 	showTensorMask(mask,1,2);
 	actualGT.sub(pred.index({0})).abs();
 	pred_bad=actualGT.gt(opt.err_at).mul(mask);                                        // To check accordingly !!!!!!!!!!!!!!!!!! 
@@ -449,16 +437,14 @@ torch::Tensor SimilarityLearner::predict(torch::Tensor X_batch, ConvNet_Fast Net
    this->fix_border(Network,  vols.slice(0,1,2,1), 1);              // fix_border to implement !!!!!!!!!*
    std::cout<<"testing code at level after fix border  "<<std::endl;
    /*******************************************************************/
-   showTensor<float> (vols.slice(0,0,1,1).slice(1,1,2,1).abs(),2,3, "stereo after fix border");
+   showTensor<float> (vols.slice(0,0,1,1).slice(1,50,51,1).abs(),2,3, "stereo after fix border");
    torch::Tensor vol;
    torch::Tensor disp=torch::empty({2,1, X_batch.size(2),X_batch.size(3)},torch::TensorOptions().dtype(torch::kFloat32).device(device));
    int mb_directions[2] = {1,-1};
    std::cout<<"Cross based cost aggregation to be done !"<<std::endl;
    for (auto direction : mb_directions)
    {
-	  vol=vols.slice(0,direction == -1 ? 0 : 1, direction == -1 ? 1 : 2,1);
-	  //std::cout<<"volume size "<<vol.sizes()<<std::endl;
-      //cross based cost aggregation CBCA
+      vol=vols.slice(0,direction == -1 ? 0 : 1, direction == -1 ? 1 : 2,1);
       torch::Tensor x0c=torch::empty({1, 4, vol.size(2), vol.size(3)},torch::TensorOptions().dtype(torch::kFloat32).device(device));
       torch::Tensor x1c=torch::empty({1, 4, vol.size(2), vol.size(3)},torch::TensorOptions().dtype(torch::kFloat32).device(device));
       std::cout<<"tempo tensor sizes "<<x0c.sizes()<<"   "<<x1c.sizes()<<std::endl;
@@ -468,13 +454,15 @@ torch::Tensor SimilarityLearner::predict(torch::Tensor X_batch, ConvNet_Fast Net
       Cross(X_batch.slice(0,1,2,1), x1c, opt.L1, opt.tau1); 
       cudaDeviceSynchronize();
       torch::Tensor tmp_cbca = torch::empty({1, disp_max, vol.size(2), vol.size(3)},torch::TensorOptions().dtype(torch::kFloat32).device(device));
-      for  (int i=0;i<opt.cbca_i1;i++)
+      for (int i=0;i<opt.cbca_i1;i++)
         {
          CrBaCoAgg(x0c,x1c,vol,tmp_cbca,direction);
-	     showTensor<float>(tmp_cbca.slice(1,15,16,1).abs(),2,3,"after first cbca volume");
+	     showTensor<float>(tmp_cbca.slice(1,20,21,1).abs(),2,3,"after first cbca volume");
          vol.copy_(tmp_cbca);
 	    }
-	  showTensor<float>(vol.slice(1,15,16,1).abs(),2,3,"after first cbca volume");
+	  tmp_cbca=tmp_cbca.mul(0);
+	  cudaDeviceSynchronize();
+	  showTensor<float>(vol.slice(1,99,100,1).abs(),2,3,"after first cbca volume");
 	  // SGM 
 	  std::cout<<"Cross based cost aggregation has been done !"<<std::endl;
       vol = vol.transpose(1, 2).transpose(2, 3).clone(); // see it later !!!!!!!! it is absolutely  not going to work !!!!!!!!!
@@ -489,26 +477,31 @@ torch::Tensor SimilarityLearner::predict(torch::Tensor X_batch, ConvNet_Fast Net
                 opt.alpha1, opt.sgm_q1, opt.sgm_q2, direction);
              vol.copy_(out).div(4);
 	    }
+	  cudaDeviceSynchronize();
       vol.resize_({1, disp_max, X_batch.size(2), X_batch.size(3)});
-      vol.copy_(out.transpose(2, 3).transpose(1, 2)).div(3);
+      vol.copy_(out.transpose(2, 3).transpose(1, 2)).div(4);
       std::cout<<"after sgm 2 has been done !"<<std::endl;
       
-	  showTensor<float>(vol.slice(1,15,16,1).abs(),2,3,"after sgm2 volume");
+	  showTensor<float>(vol.slice(1,20,21,1),2,3,"after sgm2 volume");
       //  ANOTHER CBCA 2
       for (int i=0;i<opt.cbca_i2;i++)
          {
            CrBaCoAgg(x0c, x1c, vol, tmp_cbca, direction);
            vol.copy_(tmp_cbca);
          }
-	  showTensor<float>(vol.slice(1,15,16,1).abs(),2,3,"after cbca2 volume");
+      cudaDeviceSynchronize();
+	  showTensor<float>(vol.slice(1,20,21,1).abs(),2,3,"after cbca2 volume");
       std::cout<<"cross based cost aggregation 2 "<<std::endl;
        // Get the min disparity from the cost volume 
+      
       std::tuple<torch::Tensor, torch::Tensor> d_Tpl = torch::min(vol,1);
       torch::Tensor d=std::get<0>(d_Tpl);
+      //std::cout<<"Disparity tensor values "<<d<<std::endl;
       at::reshape(d, {1,1, X_batch.size(2),X_batch.size(3)});
       std::cout<<"disparity shape "<<d.sizes()<<std::endl;
+      
 	  showTensor<float>(d,1,2,"disparity map");
-      disp.index_put_({direction == 1 ? 0 : 1}, d.add(-1)); // Make sure it is correct and see what it gives as a result !!!!!!!!!!!! 
+      disp.index_put_({direction == 1 ? 0 : 1}, d.abs().add(-1)); // Make sure it is correct and see what it gives as a result !!!!!!!!!!!! 
    }
    std::cout<<"stereo process completed"<<std::endl;
       // All Subsequent steps that allow to handle filtering and interpolation 
@@ -635,25 +628,25 @@ int main(int argc, char **argv) {
             opt.ks         = 3;
             opt.l2         = 4;
             opt.nh2        = 384;
-            opt.lr         = 0.003;
+            opt.lr         = 0.002;
             opt.bs         = 128;
             opt.mom        = 0.9;
             opt.true1      = 1;
             opt.false1     = 4;
             opt.false2     = 10;
-            opt.L1         = 9;
-            opt.cbca_i1    = 1;
-            opt.cbca_i2    = 1;
-            opt.tau1       = 0.03;
-            opt.pi1        = 1.32;
-            opt.pi2        = 18.0;
+            opt.L1         = 0;
+            opt.cbca_i1    = 0;
+            opt.cbca_i2    = 0;
+            opt.tau1       = 0.0;
+            opt.pi1        = 4;
+            opt.pi2        = 55.72;
             opt.sgm_i      = 1;
-            opt.sgm_q1     = 4.5;
-            opt.sgm_q2     = 9;
-            opt.alpha1     = 2;
-            opt.tau_so     = 0.13;
-            opt.blur_sigma = 3.0;
-            opt.blur_t     = 2.0;
+            opt.sgm_q1     = 3;
+            opt.sgm_q2     = 2.5;
+            opt.alpha1     = 1.5;
+            opt.tau_so     = 0.02;
+            opt.blur_sigma = 7.74;
+            opt.blur_t     = 5.0;
          }
       else 
       {
@@ -702,7 +695,7 @@ int main(int argc, char **argv) {
             opt.false1     =  4;
             opt.false2     =  10;
             opt.L1         =  0;
-            opt.cbca_i1    =  0;
+            opt.cbca_i1    =  4;
             opt.cbca_i2    =  0;
             opt.tau1       =  0;
             opt.pi1        =  4;
