@@ -154,7 +154,15 @@ public:
         for (auto module : model_ref)
         {
     		if (cc<Sz-1)
-    		{x=module.forward(x);}
+    		{x=module.forward(x);
+			//print tensor 0 
+			if (cc==2)
+				{
+				   std::cout<<"++++++currents ize+++++ "<<x.sizes()<<std::endl;
+                   std::cout<<x.slice(0,0,1,1).slice(1,49,50,1).slice(2,0,5,1).slice(3,0,5,1)<<std::endl;
+                   std::cout<<x.slice(0,1,2,1).slice(1,49,50,1).slice(2,0,5,1).slice(3,0,5,1)<<std::endl;
+				}
+			}
     		cc++;
     	}
     	return x;

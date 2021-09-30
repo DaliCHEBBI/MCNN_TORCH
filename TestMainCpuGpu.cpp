@@ -114,25 +114,75 @@ template <typename T> void showTensor(torch::Tensor a,int dim1, int dim2,string 
 	cv::waitKey(0);
 }
 
-void showTensorMask(torch::Tensor a,int dim1, int dim2)
-{
-
-	cv::Mat Output=cv::Mat(a.size(dim1),a.size(dim2),CV_32FC1,a.data_ptr<bool>());
-	cv::imshow("Mask",Output);
-	savePFM(Output,"./mask.pfm");
-	cv::waitKey(0);
-}
-void ReadBinaryFile(std::string filename, torch::Tensor Host)
+torch::Tensor ReadBinaryFile(std::string filename, torch::Tensor Host)
 {
   	int fd;
   	float *TensorContent;
   	fd = open(filename.c_str(), O_RDONLY);
   	TensorContent = static_cast<float*>(mmap(NULL, Host.numel() * sizeof(float), PROT_READ, MAP_SHARED, fd, 0));
-	Host = torch::from_blob(TensorContent, Host.sizes(), torch::TensorOptions().dtype(torch::kFloat32));
+  	/*for (int i=0;i<64;i++)
+  	{
+		std::cout<<TensorContent[i]<<std::endl;
+	}*/
+	std::cout<<"host sizes "<<std::endl;
+	torch::Tensor Temp=torch::from_blob(TensorContent, Host.sizes(), torch::TensorOptions().dtype(torch::kFloat32));
   	//showTensor<float>(Host,2,3);
   	close(fd);
+  	return Temp;
 }
 
+
+void CompareTwoTensors(torch::Tensor a1,int dim, int idSlice)
+{
+	//Read the reference tensor and compare it with the computed tensor 
+	torch::Tensor volume=torch::empty({1,50,1024,1024},torch::TensorOptions().dtype(torch::kFloat32));
+	//ReadBinaryFile("./vol1.bin",volume);
+	showTensor<float>(volume.slice(1,5,6,1).abs(),2,3,"volume lua");
+	std::cout<<volume.slice(dim,idSlice,idSlice+1,1).slice(1,0,1,1).sizes()<<std::endl;
+	std::cout<<volume.slice(dim,idSlice,idSlice+1,1).slice(2,0,20,1).slice(3,0,20,1)<<std::endl;
+	auto diff=a1.sub(volume.slice(dim,idSlice,idSlice+1,1).slice(2,0,20,1).slice(3,0,20,1));
+	//std::cout<<"difference de tenseurs "<<diff<<std::endl;
+}
+
+
+void showTensorDisparity(torch::Tensor a,int dim1, int dim2)
+{
+
+
+	long * datahandler=a.data_ptr<long>();
+	cv::Mat Output=cv::Mat::zeros(a.size(dim1),a.size(dim2),CV_8UC1);
+	for (int i=0;i<1024;i++)
+	{
+		for (int j=0;j<1024;j++)
+		{
+			Output.at<uchar>(i,j)=(uchar)datahandler[j+i*1024];
+		}
+	}
+	
+	cv::imshow("DISPARITY",Output);
+	cv::imwrite("./disp_out.png",Output);
+	//writePNG16(a, 1024, 1024,"./disp_out.png");
+	//savePFM(Output,"./disp.pfm");
+	cv::waitKey(0);
+}
+
+void showTensorMask(torch::Tensor a,int dim1, int dim2)
+{	
+	bool * datahandler =a.data_ptr<bool>();
+	cv::Mat Output=cv::Mat::zeros(a.size(dim1),a.size(dim2),CV_8UC1);
+	
+	for (int i=0;i<1024;i++)
+	{
+		for (int j=0;j<1024;j++)
+		{
+			Output.at<uchar>(i,j)=datahandler[j+i*1024]== 1 ? 255:0;
+		}
+	}
+	
+	cv::imshow("Mask",Output);
+	//savePFM(Output,"./mask.pfm");
+	cv::waitKey(0);
+}
 
 
 //**********************************************************************
@@ -225,10 +275,23 @@ void SimilarityLearner::PopulateModelFromBinary(ConvNet_Fast Network,std::vector
 			auto weight1=std::get<0>(Names.at(countFiles));
 			auto bias1=std::get<1>(Names.at(countFiles));
 			//READ BINARY FILES AND STORE TENSORS IN RELEVANT Weights and biases of the model structure 
-			ReadBinaryFile(weight1,Fast->named_children()[i].value().get()->as<torch::nn::Conv2dImpl>()->weight.data());
+			torch::Tensor Weights=torch::empty(Fast->named_children()[i].value().get()->as<torch::nn::Conv2dImpl>()->weight.data().sizes(),torch::TensorOptions().dtype(torch::kFloat32));
+			Weights=ReadBinaryFile(weight1,Fast->named_children()[i].value().get()->as<torch::nn::Conv2dImpl>()->weight.data());
+			//memcpy to copy content into conv2D weight 
+			std::memcpy(Fast->named_children()[i].value().get()->as<torch::nn::Conv2dImpl>()->weight.data().data_ptr<float>(),Weights.data_ptr<float>(),sizeof(float)*Weights.numel());
 			std::cout<<"inner weight sizes "<<Fast->named_children()[i].value().get()->as<torch::nn::Conv2dImpl>()->weight.data().sizes()<<std::endl;
-			showTensor<float>(Fast->named_children()[i].value().get()->as<torch::nn::Conv2dImpl>()->weight.data(),2,3,"weights");
-			ReadBinaryFile(bias1,Fast->named_children()[i].value().get()->as<torch::nn::Conv2dImpl>()->bias.data());
+			showTensor<float>(Fast->named_children()[i].value().get()->as<torch::nn::Conv2dImpl>()->weight.data().slice(0,0,1,1).slice(1,0,1,1),2,3,"weights");
+			//std::cout<<Fast->named_children()[i].value().get()->as<torch::nn::Conv2dImpl>()->weight.data()<<std::endl;
+			//std::cout<<Fast->named_children()[i].value().get()->as<torch::nn::Conv2dImpl>()->weight.data().slice(0,1,2,1)<<std::endl;
+			//std::cout<<Fast->named_children()[i].value().get()->as<torch::nn::Conv2dImpl>()->weight.data().slice(0,2,3,1)<<std::endl;
+			//std::cout<<Fast->named_children()[i].value().get()->as<torch::nn::Conv2dImpl>()->weight.data().slice(0,3,4,1)<<std::endl;
+			::cout<<"WEIGHTSSSS "<<Fast->named_children()[i].value().get()->as<torch::nn::Conv2dImpl>()->weight.data().slice(0,0,5,1).slice(1,0,1,1)<<std::endl;
+			torch::Tensor Biases=torch::empty(Fast->named_children()[i].value().get()->as<torch::nn::Conv2dImpl>()->bias.data().sizes(),torch::TensorOptions().dtype(torch::kFloat32));
+			Biases=ReadBinaryFile(bias1,Fast->named_children()[i].value().get()->as<torch::nn::Conv2dImpl>()->bias.data());
+			std::memcpy(Fast->named_children()[i].value().get()->as<torch::nn::Conv2dImpl>()->bias.data().data_ptr<float>(),Biases.data_ptr<float>(),sizeof(float)*Biases.numel());
+
+			std::cout<<"BIASSS  "<<Fast->named_children()[i].value().get()->as<torch::nn::Conv2dImpl>()->bias.data()<<std::endl;
+			// Another way to read info and store it in Weights 
 			countFiles++;
 	    }
 	}
@@ -382,11 +445,14 @@ size_t data_size, torch::Device device,Options opt)
 	auto img_heigth=currentMetadata.accessor<int32_t,1>()[0];
 	auto img_width =currentMetadata.accessor<int32_t,1>()[1];
 	auto id  =currentMetadata.accessor<int32_t,1>()[2];
-	std::cout<<"testing code at level after test data accessor "<<std::endl;
+	std::cout<<"testing code at level after test data accessor "<<id<<std::endl;
 	X_batch.index_put_({0},Dataset.mX0_left_Dataset.index({indexIm-1})); // May ll add img_width to avoid "out_of_range"   ^^^^^^^^^
 	X_batch.index_put_({1},Dataset.mX1_right_Dataset.index({indexIm-1})); // May ll add img_width to avoid "out_of_range"  ^^^^^^^^^
 	//*******+++++++++ I think i need to synchronize with GPU Later 
 	// SHOW IMAGES  
+	//Check read data 
+	std::cout<<"first image "<<X_batch.slice(0,0,1,1).slice(2,0,10,1).slice(3,0,10,1)<<std::endl;
+	std::cout<<"second image "<<X_batch.slice(0,1,2,1).slice(2,0,10,1).slice(3,0,10,1)<<std::endl;
 	showTensor<float> (X_batch.slice(0,0,1,1),2,3,"image 1");
 	showTensor<float> (X_batch.slice(0,1,2,1),2,3,"image 2");
 	std::cout<<"testing code at level predict  "<<std::endl;
@@ -405,7 +471,7 @@ size_t data_size, torch::Device device,Options opt)
 	mask=actualGT.ne(0.0);              // To check accordingly !!!!!!!!!!!!!!!!!!
 	//std::cout<<"mask"<<mask<<std::endl;
 	showTensorMask(mask,1,2);
-	actualGT.sub(pred.index({0})).abs();
+	actualGT.sub(pred.index({0}));
 	pred_bad=actualGT.gt(opt.err_at).mul(mask);                                        // To check accordingly !!!!!!!!!!!!!!!!!! 
 	pred_good=actualGT.le(opt.err_at).mul(mask);
 	auto errT=pred_bad.sum().div(mask.sum());
@@ -428,7 +494,10 @@ torch::Tensor SimilarityLearner::predict(torch::Tensor X_batch, ConvNet_Fast Net
    std::cout<<"testing code at level before stereo join "<<std::endl;
    StereoJoin(output.slice(0,0,1,1), output.slice(0,1,2,1), vols.slice(0,0,1,1), vols.slice(0,1,2,1));  // implemented in cuda !!!!!!!+++++++
    cudaDeviceSynchronize();
-   showTensor<float> (output.slice(0,0,1,1).slice(1,20,21,1),2,3,"stereo join");
+   //std::cout<<output.slice(0,0,1,1).slice(1,20,21,1)<<std::endl;
+   //showTensor<float> (output.slice(0,0,1,1).slice(1,20,21,1),2,3,"stereo join");
+   //CompareTwoTensors(vols.slice(0,0,1,1).slice(1,5,6,1).slice(2,0,20,1).slice(3,0,20,1),1,5);
+   showTensor<float> (vols.slice(0,0,1,1).slice(1,5,6,1).abs(),2,3, "computed Tensor to compare");
    //showTensor<float> (output.slice(1,1,2,1),2,3,"stereo join");
    std::cout<<"testing code at level after stereo join  "<<std::endl;
    std::cout<<"volumes sizes of slices "<<vols.slice(0,1,2,1).sizes()<<std::endl;
@@ -437,7 +506,8 @@ torch::Tensor SimilarityLearner::predict(torch::Tensor X_batch, ConvNet_Fast Net
    this->fix_border(Network,  vols.slice(0,1,2,1), 1);              // fix_border to implement !!!!!!!!!*
    std::cout<<"testing code at level after fix border  "<<std::endl;
    /*******************************************************************/
-   showTensor<float> (vols.slice(0,0,1,1).slice(1,50,51,1).abs(),2,3, "stereo after fix border");
+   std::cout<<"volume stereo join "<<vols.slice(0,0,1,1).slice(1,50,51,1)<<std::endl;
+   showTensor<float> (vols.slice(0,0,1,1).slice(1,50,51,1),2,3, "stereo after fix border");
    torch::Tensor vol;
    torch::Tensor disp=torch::empty({2,1, X_batch.size(2),X_batch.size(3)},torch::TensorOptions().dtype(torch::kFloat32).device(device));
    int mb_directions[2] = {1,-1};
@@ -452,6 +522,8 @@ torch::Tensor SimilarityLearner::predict(torch::Tensor X_batch, ConvNet_Fast Net
       Cross(X_batch.slice(0,0,1,1), x0c, opt.L1, opt.tau1); 
       cudaDeviceSynchronize();
       Cross(X_batch.slice(0,1,2,1), x1c, opt.L1, opt.tau1); 
+      //std::cout<<x0c.slice(1,0,1,1)<<std::endl;
+      //showTensor<float>(x0c.slice(1,0,1,1),2,3,"cbca regions direction x");
       cudaDeviceSynchronize();
       torch::Tensor tmp_cbca = torch::empty({1, disp_max, vol.size(2), vol.size(3)},torch::TensorOptions().dtype(torch::kFloat32).device(device));
       for (int i=0;i<opt.cbca_i1;i++)
@@ -462,10 +534,11 @@ torch::Tensor SimilarityLearner::predict(torch::Tensor X_batch, ConvNet_Fast Net
 	    }
 	  tmp_cbca=tmp_cbca.mul(0);
 	  cudaDeviceSynchronize();
-	  showTensor<float>(vol.slice(1,99,100,1).abs(),2,3,"after first cbca volume");
+	  //showTensor<float>(vol.slice(1,9,10,1).abs(),2,3,"volume at disp 9");
+	  //showTensor<float>(vol.slice(1,10,11,1).abs(),2,3,"volume at disp 10");
 	  // SGM 
-	  std::cout<<"Cross based cost aggregation has been done !"<<std::endl;
-      vol = vol.transpose(1, 2).transpose(2, 3).clone(); // see it later !!!!!!!! it is absolutely  not going to work !!!!!!!!!
+	  //std::cout<<"Cross based cost aggregation has been done !"<<std::endl;
+      vol = vol.transpose(1, 2).transpose(2, 3).clone(); 
       std::cout<<"volume  transposed "<<vol.sizes()<<std::endl;
       torch::Tensor out = torch::empty({1, vol.size(1), vol.size(2), vol.size(3)},torch::TensorOptions().dtype(torch::kFloat32).device(device));
       torch::Tensor tmp = torch::empty({vol.size(2), vol.size(3)},torch::TensorOptions().dtype(torch::kFloat32).device(device));
@@ -475,33 +548,36 @@ torch::Tensor SimilarityLearner::predict(torch::Tensor X_batch, ConvNet_Fast Net
              out=out.mul(0);
              sgm2(X_batch.slice(0,0,1,1), X_batch.slice(0,1,2,1), vol, out, tmp, opt.pi1, opt.pi2, opt.tau_so,
                 opt.alpha1, opt.sgm_q1, opt.sgm_q2, direction);
+             cudaDeviceSynchronize();
              vol.copy_(out).div(4);
 	    }
-	  cudaDeviceSynchronize();
+	  //cudaDeviceSynchronize();
       vol.resize_({1, disp_max, X_batch.size(2), X_batch.size(3)});
       vol.copy_(out.transpose(2, 3).transpose(1, 2)).div(4);
       std::cout<<"after sgm 2 has been done !"<<std::endl;
       
-	  showTensor<float>(vol.slice(1,20,21,1),2,3,"after sgm2 volume");
+	  //showTensor<float>(vol.slice(1,10,11,1),2,3,"after sgm2 applied volume");
       //  ANOTHER CBCA 2
       for (int i=0;i<opt.cbca_i2;i++)
          {
            CrBaCoAgg(x0c, x1c, vol, tmp_cbca, direction);
+           cudaDeviceSynchronize();
            vol.copy_(tmp_cbca);
          }
-      cudaDeviceSynchronize();
-	  showTensor<float>(vol.slice(1,20,21,1).abs(),2,3,"after cbca2 volume");
+      //cudaDeviceSynchronize();
+      showTensor<float>(vol.slice(1,49,50,1),2,3,"after cbca2 volume");
       std::cout<<"cross based cost aggregation 2 "<<std::endl;
        // Get the min disparity from the cost volume 
       
-      std::tuple<torch::Tensor, torch::Tensor> d_Tpl = torch::min(vol,1);
+      std::tuple<torch::Tensor, torch::Tensor> d_Tpl = at::min(vol,1);
       torch::Tensor d=std::get<0>(d_Tpl);
+      torch::Tensor indexes=std::get<1>(d_Tpl);
+      std::cout<<"disparity indexes"<<indexes.sizes()<<std::endl;
       //std::cout<<"Disparity tensor values "<<d<<std::endl;
       at::reshape(d, {1,1, X_batch.size(2),X_batch.size(3)});
-      std::cout<<"disparity shape "<<d.sizes()<<std::endl;
-      
-	  showTensor<float>(d,1,2,"disparity map");
-      disp.index_put_({direction == 1 ? 0 : 1}, d.abs().add(-1)); // Make sure it is correct and see what it gives as a result !!!!!!!!!!!! 
+	  showTensorDisparity(indexes,1,2);
+	  std::cout<<"indexes values and sizes  ++++++"<<indexes.numel()<<std::endl;
+      disp.index_put_({direction == 1 ? 0 : 1},indexes); // Make sure it is correct and see what it gives as a result !!!!!!!!!!!! 
    }
    std::cout<<"stereo process completed"<<std::endl;
       // All Subsequent steps that allow to handle filtering and interpolation 
@@ -584,7 +660,7 @@ int main(int argc, char **argv) {
          opt.d_contrast   =1;
          opt.height       = 1024;
          opt.width        = 1024;
-         opt.disp_max     = 100;
+         opt.disp_max     = 200;
          opt.n_te         = 0;
          opt.n_input_plane= 1;
 	  }
@@ -743,7 +819,7 @@ int main(int argc, char **argv) {
   }
   //********************Reading Training and Testing Data**************\\
   // Get Tensors names : have been saved before for data preparation
-  std::string Datapath="./DataExample/";
+  std::string Datapath="./DataExample2/";
   std::string X0_left_Dataset=Datapath+"x0.bin";
   std::string X1_right_Dataset=Datapath+"x1.bin";
   std::string dispnoc_Data=Datapath+"dispnoc.bin";

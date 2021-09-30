@@ -1355,11 +1355,6 @@ __global__ void StereoJoin_(float *input_L, float *input_R, float *output_L, flo
 	CUDA_CHECK(cudaMalloc(&outL,size_outputL));
 	CUDA_CHECK(cudaMalloc(&outR,size_outputR));
 	
-    /*float *INPUTL = reinterpret_cast<float*> (input_L.data_ptr());
-    float *INPUTR = reinterpret_cast<float*> (input_R.data_ptr());
-    float *OUTPUTL = reinterpret_cast<float*>(output_L.data_ptr());
-    float *OUTPUTR = reinterpret_cast<float*>(output_R.data_ptr());*/
-	
 	std::cout<<" is contiguious "<<input_L.is_contiguous()<<std::endl;
 	std::cout<<" is contiguious "<<input_R.is_contiguous()<<std::endl;
 	std::cout<<" is contiguious "<<output_L.is_contiguous()<<std::endl;
