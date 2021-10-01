@@ -16,6 +16,10 @@ using namespace std;
 
 #define TB 1024
 
+#define DISP_MAX 256
+
+#define COLOR_DIFF(x, i, j) (abs(x[i] - x[j]))
+
 #define CUDA_CHECK(X)                                                          \
   do {                                                                         \
     cudaError_t err = X;                                                       \
@@ -470,7 +474,8 @@ __global__ void sgm(float *x0, float *x1, float *vol, float *tmp, float *out, in
 	assert((dim1) >= 0 && (dim1) < size1 && (dim2) >= 0 && (dim2) < size2 && (dim3) >= 0 && (dim3) < size3), \
 	((((dim0) * size1 + (dim1)) * size2 + (dim2)) * size3 + dim3)
 /***********************************************************************/
-template <int sgm_direction> __global__ void sgm2(float *x0, float *x1, float *input, float *output, float *tmp, float pi1, float pi2, float tau_so, float alpha1, float sgm_q1, float sgm_q2, int direction, int size1, int size2, int size3, int step)
+template <int sgm_direction> 
+__global__ void sgm2(float *x0, float *x1, float *input, float *output, float *tmp, float pi1, float pi2, float tau_so, float alpha1, float sgm_q1, float sgm_q2, int direction, int size1, int size2, int size3, int step)
 {
 	int x, y, dx, dy;
 	int d = threadIdx.x;
@@ -593,12 +598,20 @@ void sgm2(torch::Tensor x0, torch::Tensor x1, torch::Tensor input , torch::Tenso
 	alpha11  =alpha1  ;
 	sgm_q11  =sgm_q1  ;
 	sgm_q22  =sgm_q2  ;
-	dir     =direction;
+	dir      =direction;
+	std::cout<<"pi1     : "<<pi11<<std::endl;
+	std::cout<<"pi2     : "<<pi22<<std::endl;
+	std::cout<<"tau_soo : "<<tau_soo<<std::endl;
+	std::cout<<"alpha11 : "<<alpha11<<std::endl;
+	std::cout<<"sgm_q11 : "<<sgm_q11<<std::endl;
+	std::cout<<"sgm_q22 : "<<sgm_q22<<std::endl;
+	std::cout<<"dir     : "<<dir<<std::endl;
 	
 	size1 = output.size(1)* output.size(3);
 	size2 = output.size(2) * output.size(3);
 	disp_max = output.size(3);
 	
+	std::cout<<"disparity max "<<disp_max<<std::endl;
 	// input 
 	size1In=input.size(1);
 	size2In=input.size(2);
@@ -618,7 +631,7 @@ void sgm2(torch::Tensor x0, torch::Tensor x1, torch::Tensor input , torch::Tenso
 			step);
 	}
 	
-	checkCudaError();
+	//checkCudaError();
 	for (int step = 0; step < size2In; step++) {
 		sgm2<1><<<(size1 - 1) / disp_max + 1, disp_max>>>(
 			x00,
@@ -633,7 +646,7 @@ void sgm2(torch::Tensor x0, torch::Tensor x1, torch::Tensor input , torch::Tenso
 			step);
 	}
 
-	checkCudaError();
+	//checkCudaError();
 	for (int step = 0; step < size1In; step++) {
 		sgm2<2><<<(size2 - 1) / disp_max + 1, disp_max>>>(
 			x00,
@@ -648,7 +661,7 @@ void sgm2(torch::Tensor x0, torch::Tensor x1, torch::Tensor input , torch::Tenso
 			step);
 	}
 
-	checkCudaError();
+	//checkCudaError();
 	for (int step = 0; step < size1In; step++) {
 		sgm2<3><<<(size2 - 1) / disp_max + 1, disp_max>>>(
 			x00,
@@ -667,6 +680,7 @@ void sgm2(torch::Tensor x0, torch::Tensor x1, torch::Tensor input , torch::Tenso
 	
 	// copy back to host 
 	CUDA_CHECK(cudaMemcpy(output.data_ptr<float>(), outputt, size_outputt, cudaMemcpyDeviceToHost));
+	CUDA_CHECK(cudaMemcpy(tmp.data_ptr<float>(), tmpp, size_tmpp, cudaMemcpyDeviceToHost));
 	
 	//Free Memory 
 	cudaFree(x00);

@@ -156,11 +156,11 @@ public:
     		if (cc<Sz-1)
     		{x=module.forward(x);
 			//print tensor 0 
-			if (cc==2)
+			if (cc==6)
 				{
-				   std::cout<<"++++++currents ize+++++ "<<x.sizes()<<std::endl;
-                   std::cout<<x.slice(0,0,1,1).slice(1,49,50,1).slice(2,0,5,1).slice(3,0,5,1)<<std::endl;
-                   std::cout<<x.slice(0,1,2,1).slice(1,49,50,1).slice(2,0,5,1).slice(3,0,5,1)<<std::endl;
+				   std::cout<<"++++++currents ize cnn 4 +++++ "<<x.sizes()<<std::endl;
+                   std::cout<<x.slice(0,0,1,1).slice(1,20,21,1).slice(2,0,10,1).slice(3,0,10,1)<<std::endl;
+                   std::cout<<x.slice(0,1,2,1).slice(1,20,21,1).slice(2,0,10,1).slice(3,0,10,1)<<std::endl;
 				}
 			}
     		cc++;

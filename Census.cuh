@@ -7,9 +7,6 @@
 #include <png++/image.hpp>
 #include <torch/torch.h>
 
-#define DISP_MAX 392
-
-#define COLOR_DIFF(x, i, j) (abs(x[i] - x[j]))
 
 __device__ void sort(float *x, int n);
 __global__ void ad(float *x0, float *x1, float *output, int size, int size2, int size3, int direction);
