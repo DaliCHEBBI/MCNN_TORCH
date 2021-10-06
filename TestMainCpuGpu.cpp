@@ -144,7 +144,19 @@ void CompareTwoTensors(torch::Tensor a1,int dim, int idSlice)
 	//std::cout<<"difference de tenseurs "<<diff<<std::endl;
 }
 
-
+torch::Tensor TranslateTileTest(torch::Tensor Tile, int TransOffsetX)
+{
+	torch::Tensor Res=torch::zeros(Tile.sizes(),torch::TensorOptions().dtype(torch::kFloat32));
+	float * datahandler=Tile.data_ptr<float>();
+	for (int i=0;i<Tile.size(2);i++)
+	{
+		for (int j=0;j<Tile.size(1)-TransOffsetX;j++)
+		{
+			Res.data_ptr<float>()[j+i*Tile.size(1)]=datahandler[j+TransOffsetX+i*Tile.size(2)];
+		}
+	}
+	return Res;
+}
 void showTensorDisparity(torch::Tensor a,int dim1, int dim2)
 {
 
@@ -164,6 +176,53 @@ void showTensorDisparity(torch::Tensor a,int dim1, int dim2)
 	//writePNG16(a, 1024, 1024,"./disp_out.png");
 	//savePFM(Output,"./disp.pfm");
 	cv::waitKey(0);
+}
+
+void showTensorDisparity2(torch::Tensor a,int dim1, int dim2)
+{
+
+
+	float * datahandler=a.data_ptr<float>();
+	if (a.size(1)==1)
+	{
+	cv::Mat Output=cv::Mat::zeros(a.size(dim1),a.size(dim2),CV_8UC1);
+	for (int i=0;i<1024;i++)
+	{
+		for (int j=0;j<1024;j++)
+		{
+			Output.at<uchar>(i,j)=(uchar)datahandler[j+i*1024];
+		}
+	}
+	
+	cv::imshow("outocclusion",Output);
+	cv::imwrite("./occlusioninterp.png",Output);
+	//writePNG16(a, 1024, 1024,"./disp_out.png");
+	//savePFM(Output,"./disp.pfm");
+	cv::waitKey(0);
+   }
+   else
+   { 
+	   std::vector<cv::Mat> AllChannels;
+	   for (int cc=0;cc<a.size(1);cc++)
+	   {
+			cv::Mat Output=cv::Mat::zeros(a.size(dim1),a.size(dim2),CV_8UC1);
+			for (int i=0;i<1024;i++)
+			{
+				for (int j=0;j<1024;j++)
+				{
+					Output.at<uchar>(i,j)=(uchar)datahandler[j+i*1024+cc*1024*1024];
+				}
+			}
+			AllChannels.push_back(Output); 
+		}
+		cv::Mat AllChannelsImage;
+		cv::merge(AllChannels,AllChannelsImage);
+	    cv::imshow("rgb disp",AllChannelsImage);
+	    cv::imwrite("./rgb_disp.png",AllChannelsImage);
+	    //writePNG16(a, 1024, 1024,"./disp_out.png");
+	    //savePFM(Output,"./disp.pfm");
+	    cv::waitKey(0);
+   }
 }
 
 void showTensorMask(torch::Tensor a,int dim1, int dim2)
@@ -432,7 +491,7 @@ size_t data_size, torch::Device device,Options opt)
   NetworkTe->eval();
   float Loss = 0;
   float err_sum=0.0;
-  torch::Tensor X_batch=torch::empty({2,1,opt.height,opt.width},torch::TensorOptions().dtype(torch::kFloat32).device(device));
+  torch::Tensor X_batch=torch::empty({2,opt.n_input_plane,opt.height,opt.width},torch::TensorOptions().dtype(torch::kFloat32).device(device));
   torch::Tensor pred_good, pred_bad, pred;  // SIZE IS TO BE DEFINED !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   for (int i=0; i<Dataset.mte.size(0); i++) // the indexes of test images are in "te.bin" of dimension n 
   {
@@ -440,14 +499,15 @@ size_t data_size, torch::Device device,Options opt)
 	auto indexIm=Dataset.mte.accessor<int64_t,1>()[i];    // toujours >=1 (créé par torch lua)
 	std::cout<<"testing code at level test data accessor auto"<<std::endl;
 	std::cout<<"index value "<<indexIm<<std::endl;
-	torch::Tensor currentMetadata=Dataset.mmetadata.index({indexIm}); // toujours >=1 (créé par torch lua)
+	torch::Tensor currentMetadata=Dataset.mmetadata.index({indexIm-1}); // toujours >=1 (créé par torch lua)
 	std::cout<<"testing code at level test data accessor auto +"<<std::endl;
 	auto img_heigth=currentMetadata.accessor<int32_t,1>()[0];
 	auto img_width =currentMetadata.accessor<int32_t,1>()[1];
 	auto id  =currentMetadata.accessor<int32_t,1>()[2];
 	std::cout<<"testing code at level after test data accessor "<<id<<std::endl;
-	X_batch.index_put_({0},Dataset.mX0_left_Dataset.index({indexIm})); // May ll add img_width to avoid "out_of_range"   ^^^^^^^^^
-	X_batch.index_put_({1},Dataset.mX1_right_Dataset.index({indexIm})); // May ll add img_width to avoid "out_of_range"  ^^^^^^^^^
+	X_batch.index_put_({0},Dataset.mX0_left_Dataset.index({indexIm-1})); // May ll add img_width to avoid "out_of_range"   ^^^^^^^^^
+	X_batch.index_put_({1},Dataset.mX1_right_Dataset.index({indexIm-1})); // May ll add img_width to avoid "out_of_range"  ^^^^^^^^^
+	
 	//*******+++++++++ I think i need to synchronize with GPU Later 
 	// SHOW IMAGES  
 	//Check read data 
@@ -457,11 +517,20 @@ size_t data_size, torch::Device device,Options opt)
 	showTensor<float> (X_batch.slice(0,1,2,1),2,3,"image 2");
 	std::cout<<"testing code at level predict  "<<std::endl;
 	pred=this->predict(X_batch,NetworkTe,opt.disp_max,device,opt);   // This will bug no size defined for the tensor          ^^^^^^^^^
+	std::string filenameprediction="./Estimated_disp_BH_"+std::to_string(i)+".bin";
+    FILE *file_prediction_disp = fopen(filenameprediction.c_str(), "wb");
+    fwrite(pred.data_ptr<float>(), sizeof(float), pred.numel(), file_prediction_disp);
 	std::cout<<"testing code at level after predict presque impossible "<<std::endl;
-	showTensor<float> (pred,2,3,"prediction");
+	//store it as rgb color 
+	torch::Tensor colorPred=torch::empty({1,3,pred.size(2),pred.size(3)},torch::TensorOptions().dtype(torch::kFloat32)).contiguous();
+	grey2jet(pred.add(1).div(opt.disp_max),colorPred);
+	showTensorDisparity2(colorPred,2,3);
     std::cout<<"Predicted disparity map "<<pred.sizes()<<std::endl;
-	torch::Tensor actualGT=Dataset.mdispnoc.index({indexIm});            // May ll add img_width to avoid "out_of_range" ^^^^^^^^^
+	torch::Tensor actualGT=Dataset.mdispnoc.index({indexIm-1});            // May ll add img_width to avoid "out_of_range" ^^^^^^^^^
 	showTensor<float> (actualGT,1,2,"ground truth");
+	std::string actualGtname="./actual_groundTruth_"+std::to_string(i)+".bin";
+    FILE *actualgt = fopen(actualGtname.c_str(), "wb");
+    fwrite(actualGT.data_ptr<float>(), sizeof(float), actualGT.numel(), actualgt);
 	//std::cout<<"actual ground truth "<<actualGT<<std::endl;
 	std::cout<<"actual gt size "<<actualGT.sizes()<<std::endl;
 	pred_good=torch::empty(actualGT.sizes(),torch::TensorOptions().dtype(torch::kFloat32).device(device));
@@ -471,7 +540,7 @@ size_t data_size, torch::Device device,Options opt)
 	mask=actualGT.ne(0.0);              // To check accordingly !!!!!!!!!!!!!!!!!!
 	//std::cout<<"mask"<<mask<<std::endl;
 	showTensorMask(mask,1,2);
-	actualGT.sub(pred.index({0}));
+	actualGT=actualGT.sub(pred.index({0}));
 	pred_bad=actualGT.gt(opt.err_at).mul(mask);                                        // To check accordingly !!!!!!!!!!!!!!!!!! 
 	pred_good=actualGT.le(opt.err_at).mul(mask);
 	auto errT=pred_bad.sum().div(mask.sum());
@@ -492,8 +561,8 @@ torch::Tensor SimilarityLearner::predict(torch::Tensor X_batch, ConvNet_Fast Net
    //std::cout<<"output 1"<<output.slice(0,0,1,1).slice(1,20,21,1).slice(2,0,10,1).slice(3,0,10,1)<<std::endl;
    //std::cout<<"output 2"<<output.slice(0,1,2,1).slice(1,20,21,1).slice(2,0,10,1).slice(3,0,10,1)<<std::endl;
    //std::cout<<"ouput of network sizes "<<output.sizes()<<std::endl;
-   torch::Tensor vols = torch::zeros({2, disp_max, X_batch.size(2), X_batch.size(3)},torch::TensorOptions().dtype(torch::kFloat32).device(device));
-   //vols=vols.mul(NAN);
+   torch::Tensor vols = torch::ones({2, disp_max, X_batch.size(2), X_batch.size(3)},torch::TensorOptions().dtype(torch::kFloat32).device(device));
+   vols=vols.mul(NAN);
    std::cout<<"testing code at level before stereo join "<<std::endl;
    StereoJoin(output.slice(0,0,1,1), output.slice(0,1,2,1), vols.slice(0,0,1,1), vols.slice(0,1,2,1));  // implemented in cuda !!!!!!!+++++++
    cudaDeviceSynchronize();
@@ -544,10 +613,7 @@ torch::Tensor SimilarityLearner::predict(torch::Tensor X_batch, ConvNet_Fast Net
 	  //showTensor<float>(vol.slice(1,9,10,1).abs(),2,3,"volume at disp 9");
 	  //showTensor<float>(vol.slice(1,10,11,1).abs(),2,3,"volume at disp 10");
 	  // SGM 
-	  //std::cout<<"Cross based cost aggregation has been done !"<<std::endl;
-	  
-      //auto voll = vol.transpose(1, 2).transpose(2, 3); 
-      auto voll =at::transpose(at::transpose(vol,1,2),2,3);
+      auto voll =at::transpose(at::transpose(vol,1,2),2,3).contiguous();
       //auto voll = vol.view({vol.size(0),vol.size(2),vol.size(3),vol.size(1)}); 
       std::cout<<"cost volume transpose direction  "<<direction<<"    "<<voll.slice(1,0,10,1).slice(2,0,10,1).slice(3,5,6,1).sizes()<<std::endl;
       std::cout<<"cost volume transpose direction  "<<direction<<"    "<<voll.slice(3,5,6,1).slice(1,0,10,1).slice(2,0,10,1)<<std::endl;
@@ -569,8 +635,8 @@ torch::Tensor SimilarityLearner::predict(torch::Tensor X_batch, ConvNet_Fast Net
       //vol.resize_({1, disp_max, X_batch.size(2), X_batch.size(3)});
       std::cout<<"out computed transpose direction  "<<direction<<"    "<<out.slice(1,0,10,1).slice(2,0,10,1).slice(3,5,6,1)<<std::endl;
       //auto outt=out.transpose(3, 2).transpose(2, 1);
-      //auto outt=at::transpose(at::transpose(out,3,2),2,1);
-      auto outt=out.view({1, disp_max, X_batch.size(2), X_batch.size(3)});
+      auto outt=at::transpose(at::transpose(out,3,2),2,1).contiguous();
+      //auto outt=out.view({1, disp_max, X_batch.size(2), X_batch.size(3)});
       vol=outt.div(4);
       std::cout<<"after sgm 2 has been done !"<<std::endl;
       
@@ -582,7 +648,7 @@ torch::Tensor SimilarityLearner::predict(torch::Tensor X_batch, ConvNet_Fast Net
       //  ANOTHER CBCA 2
       for (int i=0;i<opt.cbca_i2;i++)
          {
-	      std::cout<<"+++++++++++++++++++++ppppppppppppppppppppppp"<<std::endl;
+	       std::cout<<"+++++++++++++++++++++ppppppppppppppppppppppp"<<std::endl;
            CrBaCoAgg(x0c, x1c, vol, tmp_cbca, direction);
            cudaDeviceSynchronize();
            vol.copy_(tmp_cbca);
@@ -604,27 +670,51 @@ torch::Tensor SimilarityLearner::predict(torch::Tensor X_batch, ConvNet_Fast Net
 	  std::cout<<"indexes values and sizes  ++++++"<<indexes.numel()<<std::endl;
       disp.index_put_({direction == 1 ? 0 : 1},indexes); // Make sure it is correct and see what it gives as a result !!!!!!!!!!!! 
    }
-   std::cout<<"stereo process completed"<<std::endl;
+      std::cout<<"stereo process completed"<<std::endl;
+      std::cout<<"disparity before outlier detection 1 "<<disp.slice(0,0,1,1).slice(2,0,15,1).slice(3,0,15,1)<<std::endl;
+      std::cout<<"disparity before outlier detection -1"<<disp.slice(0,1,2,1).slice(2,0,15,1).slice(3,70,85,1)<<std::endl;
       // All Subsequent steps that allow to handle filtering and interpolation 
-      torch::Tensor outlier = torch::empty(disp.slice(0,1,2,1).sizes(),torch::TensorOptions().dtype(torch::kFloat32).device(device));
-      torch::Tensor out = torch::empty(disp.slice(0,1,2,1).sizes(),torch::TensorOptions().dtype(torch::kFloat32).device(device));
-      torch::Tensor out2 = torch::empty(disp.slice(0,1,2,1).sizes(),torch::TensorOptions().dtype(torch::kFloat32).device(device));
-      torch::Tensor out3 = torch::empty(disp.slice(0,1,2,1).sizes(),torch::TensorOptions().dtype(torch::kFloat32).device(device));
-      torch::Tensor out4 = torch::empty(disp.slice(0,1,2,1).sizes(),torch::TensorOptions().dtype(torch::kFloat32).device(device));
-      torch::Tensor out5 = torch::empty(disp.slice(0,1,2,1).sizes(),torch::TensorOptions().dtype(torch::kFloat32).device(device));
+      torch::Tensor outlier = torch::zeros(disp.slice(0,1,2,1).sizes(),torch::TensorOptions().dtype(torch::kFloat32).device(device));
+      torch::Tensor out = torch::zeros(disp.slice(0,1,2,1).sizes(),torch::TensorOptions().dtype(torch::kFloat32).device(device));
+      torch::Tensor out2 = torch::zeros(disp.slice(0,1,2,1).sizes(),torch::TensorOptions().dtype(torch::kFloat32).device(device));
+      torch::Tensor out3 = torch::zeros(disp.slice(0,1,2,1).sizes(),torch::TensorOptions().dtype(torch::kFloat32).device(device));
+      torch::Tensor out4 = torch::zeros(disp.slice(0,1,2,1).sizes(),torch::TensorOptions().dtype(torch::kFloat32).device(device));
+      torch::Tensor out5 = torch::zeros(disp.slice(0,1,2,1).sizes(),torch::TensorOptions().dtype(torch::kFloat32).device(device));
       std::cout<<"disparity map dimensions "<<disp.sizes()<<std::endl;
       outlier_detection(disp.slice(0,1,2,1), disp.slice(0,0,1,1), outlier, disp_max);
+      //std::cout<<"disparity after outlier detection 1 "<<disp.slice(0,0,1,1).slice(2,0,15,1).slice(3,0,15,1)<<std::endl;
+      //std::cout<<"disparity after outlier detection -1"<<disp.slice(0,1,2,1).slice(2,0,15,1).slice(3,0,15,1)<<std::endl;
       std::cout<<"outlier detection done !"<<std::endl;
       interpolate_occlusion(disp.slice(0,1,2,1), outlier,out);       // CHECK THIS UP !!!!!!!!!!!!!!!
+      //std::cout<<"interpolate occlusion   "<<out<<std::endl;
+      showTensorDisparity2(out,2,3); 
+      FILE *file = fopen("./outocclusioncpp.bin", "wb");
+      fwrite(out.data_ptr<float>(), sizeof(float), out.numel(), file);
+      fclose (file);
+      // check at this level 
       std::cout<<"intepolate occlusion done !"<<std::endl;
       interpolate_mismatch(out, outlier,out2);                        // CHECK THIS UP !!!!!!!!!!!!!!!
+      FILE *filemis = fopen("./mismatched.bin", "wb");
+      fwrite(out2.data_ptr<float>(), sizeof(float), out2.numel(), filemis);
+      fclose(filemis);
       std::cout<<" Mismatch interpolation done !"<<std::endl;
       subpixel_enchancement(out2, vol, out3, disp_max);                 // CHECK THIS UO !!!!!!!!!!!!!!!
+      FILE *fileenhance = fopen("./enhanced.bin", "wb");
+      fwrite(out3.data_ptr<float>(), sizeof(float), out3.numel(), fileenhance);
+      fclose(fileenhance);
       std::cout<<"sub pixel enhhancement done !"<<std::endl;
-      median2d(out3,out4,5);            
+      median2d(out3,out4,5);   
+      FILE *filemedian = fopen("./median.bin", "wb");
+      fwrite(out4.data_ptr<float>(), sizeof(float), out4.numel(), filemedian);         
+      fclose(filemedian); 
       std::cout<<"Median 2 done !"<<std::endl;                              // CHECK THIS UO !!!!!!!!!!!!!!!
+      std::cout<<"gaussian blur "<<gaussian(opt.blur_sigma)<<std::endl;
       mean2d(out4, gaussian(opt.blur_sigma), out5, opt.blur_t);         // CHECK THIS UO !!!!!!!!!!!!!!!  GAUSSIAN
-   std::cout<<"  filtering has beeen realized "<<std::endl;
+      std::cout<<"  filtering has beeen realized "<<std::endl;
+      std::cout<<"disparity end"<<out5.slice(2,0,15,1).slice(3,0,15,1)<<std::endl;
+      FILE *file2 = fopen("./end.bin", "wb");
+      fwrite(out5.data_ptr<float>(), sizeof(float), out5.numel(), file2);
+      fclose(file2);
    return out5;
 }
 /**********************************************************************/
@@ -685,7 +775,7 @@ int main(int argc, char **argv) {
          opt.d_contrast   =1;
          opt.height       = 1024;
          opt.width        = 1024;
-         opt.disp_max     = 70;
+         opt.disp_max     = 150;
          opt.n_te         = 0;
          opt.n_input_plane= 1;
 	  }
@@ -844,7 +934,7 @@ int main(int argc, char **argv) {
   }
   //********************Reading Training and Testing Data**************\\
   // Get Tensors names : have been saved before for data preparation
-  std::string Datapath="./DataExample2/";
+  std::string Datapath="/home/mohamedali/Documents/BH_STUDY/TestVahingNoBH058/";
   std::string X0_left_Dataset=Datapath+"x0.bin";
   std::string X1_right_Dataset=Datapath+"x1.bin";
   std::string dispnoc_Data=Datapath+"dispnoc.bin";
@@ -928,13 +1018,13 @@ int main(int argc, char **argv) {
  /***CODE SNIPPET TO LOAD WEIGHTS AND BIAS STORED IN BINARY Files ******/
  std::vector<std::pair<std::string,std::string>> Container;
  
- auto p1 = std::make_pair("./WeightsAndBiases/Weights_1_cudnn.SpatialConvolution.bin","./WeightsAndBiases/Biases_1_cudnn.SpatialConvolution.bin");
+ auto p1 = std::make_pair("/home/mohamedali/Documents/BH_STUDY/WB_No_BH_Ep_50/Weights_1_cudnn.SpatialConvolution.bin","/home/mohamedali/Documents/BH_STUDY/WB_No_BH_Ep_50/Biases_1_cudnn.SpatialConvolution.bin");
  Container.push_back(p1);
- auto p2 = std::make_pair("./WeightsAndBiases/Weights_3_cudnn.SpatialConvolution.bin","./WeightsAndBiases/Biases_3_cudnn.SpatialConvolution.bin");
+ auto p2 = std::make_pair("/home/mohamedali/Documents/BH_STUDY/WB_No_BH_Ep_50/Weights_3_cudnn.SpatialConvolution.bin","/home/mohamedali/Documents/BH_STUDY/WB_No_BH_Ep_50/Biases_3_cudnn.SpatialConvolution.bin");
  Container.push_back(p2);
- auto p3 = std::make_pair("./WeightsAndBiases/Weights_5_cudnn.SpatialConvolution.bin","./WeightsAndBiases/Biases_5_cudnn.SpatialConvolution.bin");
+ auto p3 = std::make_pair("/home/mohamedali/Documents/BH_STUDY/WB_No_BH_Ep_50/Weights_5_cudnn.SpatialConvolution.bin","/home/mohamedali/Documents/BH_STUDY/WB_No_BH_Ep_50/Biases_5_cudnn.SpatialConvolution.bin");
  Container.push_back(p3);
- auto p4 = std::make_pair("./WeightsAndBiases/Weights_7_cudnn.SpatialConvolution.bin","./WeightsAndBiases/Biases_7_cudnn.SpatialConvolution.bin");
+ auto p4 = std::make_pair("/home/mohamedali/Documents/BH_STUDY/WB_No_BH_Ep_50/Weights_7_cudnn.SpatialConvolution.bin","/home/mohamedali/Documents/BH_STUDY/WB_No_BH_Ep_50/Biases_7_cudnn.SpatialConvolution.bin");
  Container.push_back(p4);
  SimilarityLearn.PopulateModelFromBinary(TestNetwork,Container);
  /**********************************************************************/ 

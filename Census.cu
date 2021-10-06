@@ -1183,8 +1183,8 @@ __global__ void mean2d(float *img, float *kernel, float *out, int size, int kern
 
 
 void mean2d(torch::Tensor img, torch::Tensor kernel, torch::Tensor out, float alpha2) {
-	assert(kernel.size(0) % 2 == 1);
 	
+	assert(kernel.size(0) % 2 == 1);
 	float *imgg,*outt,*kernell;
 	int size_imgg=sizeof(float)*img.numel();
 	int size_outt=sizeof(float)*out.numel();
@@ -1513,12 +1513,12 @@ void median2d(torch::Tensor img, torch::Tensor out, int kernel_size) {
 	//return 1;
 }
 /***********************************************************************/
-void readPNG16(torch::Tensor *imgT, const char * fname)   // See later how to make it a Float Tensor 
+void readPNG16(torch::Tensor imgT, const char * fname)   // See later how to make it a Float Tensor 
 {
 	//THFloatTensor *img_ = (THFloatTensor*)luaT_checkudata(L, 1, "torch.FloatTensor");
 	//const char* fname = luaL_checkstring(L, 2);
 
-	float *img = imgT->data_ptr<float>();
+	float *img = imgT.data_ptr<float>();
 	png::image<png::gray_pixel_16> image(fname);
 	int width = image.get_width();
 	int height = image.get_height();
@@ -1531,12 +1531,12 @@ void readPNG16(torch::Tensor *imgT, const char * fname)   // See later how to ma
 }
 /*******************************************************************/
 /*******************************************************************/
-void readPNGIARPA(torch::Tensor *imgT, const char * fname)
+void readPNGIARPA(torch::Tensor imgT, const char * fname)
 {
 	//THFloatTensor *img_ = (THFloatTensor*)luaT_checkudata(L, 1, "torch.FloatTensor");
 	//const char* fname = luaL_checkstring(L, 2);
 
-	float *img = imgT->data_ptr<float>();
+	float *img = imgT.data_ptr<float>();
 	png::image<png::gray_pixel_16> image(fname);
 	int width = image.get_width();
 	int height = image.get_height();
@@ -1589,6 +1589,25 @@ __global__ void remove_nonvisible(float *y, int size, int size3)
 	}
 }
 
+void remove_nonvisible(torch::Tensor disp)
+{
+	float * dispp;
+	int size_disp=sizeof(float)*disp.numel();
+	CUDA_CHECK(cudaMalloc(&dispp,size_disp));
+	// Copy data from cpu to GPU 
+	CUDA_CHECK(cudaMemcpy(dispp , disp.data_ptr<float>() ,size_disp , cudaMemcpyHostToDevice));
+	
+	remove_occluded<<<(disp.numel() - 1) / TB + 1, TB>>>(
+		dispp, 
+		disp.numel(),
+		disp.size(3));
+	checkCudaError();
+	CUDA_CHECK(cudaMemcpy(disp.data_ptr<float>(),dispp ,size_disp , cudaMemcpyDeviceToHost));
+	cudaFree(dispp);
+}
+
+
+
 
 __global__ void remove_occluded(float *y, int size, int size3)
 {
@@ -1604,6 +1623,24 @@ __global__ void remove_occluded(float *y, int size, int size3)
 	}
 }
 
+void remove_occluded(torch::Tensor disp)
+{
+	
+	float *dispp;
+	int size_disp=sizeof(float)*disp.numel();
+	CUDA_CHECK(cudaMalloc(&dispp,size_disp));
+	// Copy data from cpu to GPU 
+	CUDA_CHECK(cudaMemcpy(dispp , disp.data_ptr<float>() ,size_disp , cudaMemcpyHostToDevice));
+	
+	remove_occluded<<<(disp.numel() - 1) / TB + 1, TB>>>(
+		dispp, 
+		disp.numel(),
+		disp.size(3));
+	checkCudaError();
+	//copy back 
+	CUDA_CHECK(cudaMemcpy(disp.data_ptr<float>(),dispp ,size_disp , cudaMemcpyDeviceToHost));
+	cudaFree(dispp);
+}
 
 __global__ void remove_white(float *x, float *y, int size)
 {
@@ -1615,6 +1652,30 @@ __global__ void remove_white(float *x, float *y, int size)
 	}
 }
 
+void remove_white(torch::Tensor x, torch::Tensor disp)
+{
+	float *xx,*dispp;
+	int size_xx=sizeof(float)*x.numel();
+	int size_disp=sizeof(float)*disp.numel();
+	
+	CUDA_CHECK(cudaMalloc(&xx,size_xx));
+	CUDA_CHECK(cudaMalloc(&dispp,size_disp));
+	
+	// Copy from host 
+	CUDA_CHECK(cudaMemcpy(dispp , disp.data_ptr<float>() ,size_disp , cudaMemcpyHostToDevice));
+	CUDA_CHECK(cudaMemcpy(xx , x.data_ptr<float>() ,size_xx , cudaMemcpyHostToDevice));
+	
+	
+	remove_white<<<(disp.numel()-1) / TB + 1, TB>>>(
+		xx,
+		dispp,
+		disp.numel());
+
+	checkCudaError();
+	CUDA_CHECK(cudaMemcpy(disp.data_ptr<float>(),dispp ,size_disp , cudaMemcpyDeviceToHost));
+	cudaFree(xx);
+	cudaFree(dispp);
+}
 
 
 __global__ void copy_fill(float *in, float *out, int size, int in_size2, int in_size3, int out_size2, int out_size3)
@@ -1727,26 +1788,26 @@ void make_dataset2(torch::Tensor dispT, torch::Tensor nnzT, int img, int t)
 }
 
 /* CPU implementation */
-void grey2jet(torch::Tensor *grey_img, torch::Tensor *col_img)
+void grey2jet(torch::Tensor grey_img,torch::Tensor col_img)
 {
 	//THDoubleTensor *grey_img = (THDoubleTensor*)luaT_checkudata(L, 1, "torch.DoubleTensor");
 	//THDoubleTensor *col_img = (THDoubleTensor*)luaT_checkudata(L, 2, "torch.DoubleTensor");
 
-	assert(grey_img->ndimension == 2);
-	if (3 * grey_img->numel() != col_img->numel()) {
+	//assert(grey_img.sizes() == 2);
+	if (3 * grey_img.numel() != col_img.numel()) {
 		std::cerr << "Size mismatch\n";
 	}
 
-	int height = grey_img->size(0);
-	int width =  grey_img->size(1);
+	int height = grey_img.size(2);
+	int width =  grey_img.size(3);
 
-	double *gray_data = grey_img->data_ptr<double>();
-	double *col_data  = col_img->data_ptr<double>();
+	float *gray_data = grey_img.data_ptr<float>();
+	float *col_data  = col_img.data_ptr<float>();
 
 	for (int i = 0; i < height; i++) {
 		for (int j = 0; j < width; j++) {
-			double val = gray_data[i * width + j] * 4;
-			double r = 0, g = 0, b = 0;
+			float val = gray_data[i * width + j] * 4;
+			float r = 0, g = 0, b = 0;
 
 			if (-0.1 <= val && val < 0.5) {
 				r = 0;
@@ -1769,7 +1830,7 @@ void grey2jet(torch::Tensor *grey_img, torch::Tensor *col_img)
 				g = 0;
 				b = 0;
 			} else {
-				printf("val = %f\n", val);
+				//printf("val = %f\n", val);
 				assert(0);
 			}
 

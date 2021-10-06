@@ -35,19 +35,22 @@ __global__ void StereoJoin_(float *input_L, float *input_R, float *output_L, flo
 __global__ void StereoL2R_(float *vol_L, float *vol_R, int size2, int size3, int size);
 __global__ void bilateral_filter(float *img, float *out, int size, int dim2, int dim3, int kernel_radius, float sigma1, float sigma2);
 __global__ void median2d(float *img, float *out, int size, int dim2, int dim3, int kernel_radius);
-void readPNG16(torch::Tensor *imgT, const char * fname);   // See later how to make it a Float Tensor 
-void readPNGIARPA(torch::Tensor *imgT, const char * fname);
+void readPNG16(torch::Tensor imgT, const char * fname);   // See later how to make it a Float Tensor 
+void readPNGIARPA(torch::Tensor imgT, const char * fname);
 void writePNG16(torch::Tensor imgT, int height, int width, const char * fname);
 void writePFM(torch::Tensor imgT, const char * fname);
 __global__ void remove_nonvisible(float *y, int size, int size3);
 __global__ void remove_occluded(float *y, int size, int size3);
 __global__ void remove_white(float *x, float *y, int size);
 __global__ void copy_fill(float *in, float *out, int size, int in_size2, int in_size3, int out_size2, int out_size3);
+void remove_nonvisible(torch::Tensor disp);
+void remove_occluded(torch::Tensor disp);
+void remove_white(torch::Tensor x, torch::Tensor disp);
 void memcpy2d(float *dst, float *src, int x, int y, int win_radius, int height, int width);
 double random_uniform();
 void subset_dataset(torch::Tensor indexT, torch::Tensor inputT, torch::Tensor outputT );
 void make_dataset2(torch::Tensor dispT, torch::Tensor nnzT, int img, int t);
-void grey2jet(torch::Tensor *grey_img, torch::Tensor *col_img);
+void grey2jet(torch::Tensor grey_img, torch::Tensor col_img);
 
 void sgm2(torch::Tensor x0, torch::Tensor x1, torch::Tensor input , torch::Tensor output, torch::Tensor tmp,
      float pi1,float pi2, float tau_so, float alpha1, float sgm_q1, float sgm_q2, int direction
