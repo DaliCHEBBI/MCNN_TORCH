@@ -2,7 +2,7 @@ PREFIX=$(HOME)/Documents/Evaluation_MCC-CNN_CODE/MC_CNN_CPP_PYTORCH/libtorch
 PREFIXMicMac=$(HOME)/opt/micmac
 PREFIXOPENCV=$(HOME)/miniconda3/envs/TorchEnv
 CFLAGS=-I$(PREFIX)/include -I$(PREFIX)/include/torch/csrc/api/include -I$(PREFIXOPENCV)/include/opencv4 -I$(PREFIXMicMac)/include
-LDFLAGS_NVCC=-L$(PREFIX)/lib -Xlinker -rpath,$(PREFIX)/lib -lpng16
+LDFLAGS_NVCC=-L$(PREFIX)/lib -Xlinker -rpath,$(PREFIX)/lib -lpng12
 LDFLAGS_CPP=-L$(PREFIX)/lib -Wl,-rpath=$(PREFIX)/lib
 LIBS_TORCH=-ltorch -lc10 -lc10_cuda -ltorch_cuda -lcuda -lnvrtc -lnvToolsExt -ltorch_cpu -lcudart
 LOPENCV_FLAGS=-L$(PREFIXOPENCV)/lib -Wl,-rpath=$(PREFIXOPENCV)/lib
@@ -32,7 +32,7 @@ PrepareDataset.o: PrepareDataset.cpp
 	/usr/bin/g++-9 $(LDFLAGS_CPP) $(CFLAGS) $(LMICMAC_FLAGS) -o PrepareDataset.o -c PrepareDataset.cpp $(LIBS_TORCH) $(LIBS_MICMAC)
 
 PrepareDataset: PrepareDataset.o 
-	/usr/bin/g++-9 $(LDFLAGS_CPP) $(CFLAGS) $(LMICMAC_FLAGS) -o PrepareDataset PrepareDataset.o Image.o Census.o $(LIBS_TORCH) $(LIBS_MICMAC) $(LIBS_QT5_OPENGL) -lstdc++fs -lpng16
+	/usr/bin/g++-9 $(LDFLAGS_CPP) $(CFLAGS) $(LMICMAC_FLAGS) -o PrepareDataset PrepareDataset.o Image.o Census.o $(LIBS_TORCH) $(LIBS_MICMAC) $(LIBS_QT5_OPENGL) -lstdc++fs -lpng12
 
 clean:
 	rm -f cv.o TestMainCpuGpu.o Census.o TestMainCpuGpu Image.o PrepareDataset.o PrepareDataset

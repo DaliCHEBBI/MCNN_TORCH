@@ -12,7 +12,12 @@
 ColorImg::ColorImg(std::string filename) :
   mImgName(filename)
 {
-    Tiff_Im mTiffImg= Tiff_Im::UnivConvStd(mImgName);
+	bool Gray=true;
+	int aNbChan=Gray ? 1:-1;
+	bool Cons16B=true;
+    //Tiff_Im mTiffImg= Tiff_Im::UnivConvStd(mImgName);
+    Tiff_Im mTiffImg= Tiff_Im::StdConvGen(mImgName,aNbChan,Cons16B);
+    
     //GenIm::type_el aType = mTiffImg.type_el();
 
    // std::cout<<"Image channels "<<mTiffImg.nb_chan()<<endl;

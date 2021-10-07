@@ -64,29 +64,35 @@ int main(int argc, char **argv) {
 	// Call Elise Librairy We will be using because classes that handle 
 	// These transformations are already computed 
 
-	//std::string Datapath;
-	//std::string NTraining,NTesting;
-	//std::string Option;
+	/*std::string Datapath,Dataset;
+	std::string NTraining,NTesting;
+	std::string Option;*/
 		
 	/***********************************************************************
 	 Initilialize ElInitArgMain which as i understood captures arguments entered 
 	 by the operator 
 	/**********************************************************************/
-		
-	/*(
+	/*ElInitArgMain
+	(
 		argc,argv,
-		LArgMain()  << EAMC (Datapath,"Path to the dataset where triplets of folders are lying",eSAM_IsExistFile)
-					<< EAMC (NTraining, "Number of training couples pf Tiles ")
-					<< EAMC (NTesting, "Number of Testing couples of Tiles"),
-		LArgMain()  << EAM(Option,"Option",true,"FOR NOW, DON'T DO ANYTHING")
-	);
+		LArgMain()  << EAMC (Datapath,"Path to the dataset where triplets of folders are lying",eSAM_IsExistFile),
+		LArgMain()  << EAM (NTraining,"NTraining",true, "Number of training couples of Tiles ")
+					<< EAM (NTesting,"NTesting",true, "Number of Testing couples of Tiles")
+					<< EAM (Dataset,"Dataset",true, "Dataset Name to be used for processing")
+					<< EAM (Option,"Option",true,"FOR NOW, DON'T DO ANYTHING")
+	);*/
 	
-	if (MMVisualMode) return EXIT_SUCCESS;*/
+	if (MMVisualMode) return EXIT_SUCCESS;
 	std::string Datapath(argv[1]);
     std::string NTraining(argv[2]);
     std::string NTesting(argv[3]);
     std::string Dataset(argv[3]);
-    
+    std::string DirDataset=DirOfFile(Datapath);
+    if (!EAMIsInit(&Datapath))
+    {
+       std::cout<<"DATA PATH NOT INSTANTIATED "<<"Dir of file "<<DirDataset<<std::endl;
+    }
+    std::cout<<"Ntrainig "<<NTraining<<std::endl;
     int Ntr=std::stoi(NTraining);
     int Nte=std::stoi(NTesting);
     
@@ -98,7 +104,7 @@ int main(int argc, char **argv) {
     
     int height=1024;
     int width=1024;
-    int nbChannels=1;
+    int nbChannels=3;
     
     //Initialize tensors X0 and X1
     torch::Tensor X0=torch::zeros({Ntr+Nte,nbChannels,height,width},torch::TensorOptions().dtype(torch::kFloat32));
@@ -163,8 +169,8 @@ int main(int argc, char **argv) {
        std::string DisparityFullPath=Datapath+"/"+std::get<0>(Examples.at(cc))+"/"+dispocc+"/"+std::get<0>(Examples.at(cc))+"_"+std::get<1>(Examples.at(cc))+".png";
        
        // Read Images 
-       ColorImg img0(Image0FullPath);
-       ColorImg img1(Image1FullPath);
+       //ColorImg img0(Image0FullPath);
+       //ColorImg img1(Image1FullPath);
        
        //Tiff_Im img0=Tiff_Im::UnivConvStd(Image0FullPath);
        //Tiff_Im img1=Tiff_Im::UnivConvStd(Image0FullPath);
@@ -172,15 +178,19 @@ int main(int argc, char **argv) {
        //Tiff_Im Disp=Tiff_Im::UnivConvStd(Image0FullPath);
        
        //sizes 
-       int img_height=img0.sz().y;
-       int img_width=img0.sz().x;
-       
-       //narrow image if needed 
-       torch::Tensor img0InTensor =torch::empty({1,img0.getChannnels(),img_height,img_width},torch::TensorOptions().dtype(torch::kFloat32));       
-       torch::Tensor img1InTensor =torch::empty({1,img1.getChannnels(),1,img_height,img_width},torch::TensorOptions().dtype(torch::kFloat32));       
+       int img_height=1024;
+       int img_width=1024;
+       int NbChannels=3;
+       //narrow image if needed
+       torch::Tensor img0InTensor =torch::empty({1,NbChannels,img_height,img_width},torch::TensorOptions().dtype(torch::kFloat32));       
+       torch::Tensor img1InTensor =torch::empty({1,NbChannels,1,img_height,img_width},torch::TensorOptions().dtype(torch::kFloat32));       
        torch::Tensor DispInTensor =torch::empty({1,1,img_height,img_width},torch::TensorOptions().dtype(torch::kFloat32));  
        
+       readRGBPNG(img0InTensor,Image0FullPath.c_str());
+       readRGBPNG(img1InTensor,Image1FullPath.c_str());
        //Copy image content in tensors 
+       
+       /*
        if (img0.getChannnels()==1) // Gray image 
        {
 		   //Tile Left
@@ -206,16 +216,25 @@ int main(int argc, char **argv) {
            channelImage=torch::from_blob(img1.getBlueChannel()->data(),{img_height,img_width},torch::kFloat32);
            img1InTensor.index_put_({Slice(0,None,1),Slice(2,3,1),Slice(0,None,1),Slice(0,None,1)},channelImage.slice(0,0,1,1));
        }
-       
+       */
        //Normalize images 
        img0InTensor=img0InTensor.add(img0InTensor.mean().mul(-1.0)).div(img0InTensor.std());
        img1InTensor=img1InTensor.add(img1InTensor.mean().mul(-1.0)).div(img1InTensor.std());
        
+       std::cout<<"immmmf  "<<img0InTensor.index({0}).sizes()<<std::endl;	
        // Push Tensor images in relevant X0 and X1 Container Tensors 
-       X0.index_put_({cc},img0InTensor);
-       X1.index_put_({cc},img1InTensor);
+       //X0.slice(0,cc,cc+1,1)=img0InTensor;
+       //X1.slice(0,cc,cc+1,1)=img1InTensor;
+       using namespace torch::indexing;
+       X0.index_put_({Slice(cc,cc+1,1),Slice(0,1,1),Slice(0,None,1),Slice(0,None,1)},img0InTensor.slice(1,0,1,1));
+       X0.index_put_({Slice(cc,cc+1,1),Slice(1,2,1),Slice(0,None,1),Slice(0,None,1)},img0InTensor.slice(1,1,2,1));
+       X0.index_put_({Slice(cc,cc+1,1),Slice(2,3,1),Slice(0,None,1),Slice(0,None,1)},img0InTensor.slice(1,2,3,1));
+       X1.index_put_({Slice(cc,cc+1,1),Slice(0,1,1),Slice(0,None,1),Slice(0,None,1)},img1InTensor.slice(1,0,1,1));
+       X1.index_put_({Slice(cc,cc+1,1),Slice(1,2,1),Slice(0,None,1),Slice(0,None,1)},img1InTensor.slice(1,1,2,1));
+       X1.index_put_({Slice(cc,cc+1,1),Slice(2,3,1),Slice(0,None,1),Slice(0,None,1)},img1InTensor.slice(1,2,3,1));
+       //X1.index_put_({cc},img1InTensor.index({0}));
        
-       
+       std::cout<<"CHECK LEVEL "<<std::endl;
        // Read disparity image 
        if (strcmp(Dataset.c_str(),"Vahingen")==0)
        {

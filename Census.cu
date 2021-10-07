@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <unistd.h>
 #include <png++/image.hpp>
+#include <png++/rgb_pixel.hpp>
 #include <torch/torch.h>
 #include "Census.cuh"
 #include <ATen/ATen.h>
@@ -1530,6 +1531,27 @@ void readPNG16(torch::Tensor imgT, const char * fname)   // See later how to mak
 	}
 }
 /*******************************************************************/
+/***********************************************************************/
+void readRGBPNG(torch::Tensor imgT, const char * fname)   // See later how to make it a Float Tensor 
+{
+	//THFloatTensor *img_ = (THFloatTensor*)luaT_checkudata(L, 1, "torch.FloatTensor");
+	//const char* fname = luaL_checkstring(L, 2);
+
+	float *img = imgT.data_ptr<float>();
+	png::image<png::basic_rgb_pixel<uint16_t>> image(fname);
+	int width = image.get_width();
+	int height = image.get_height();
+	//std::cout<<"image sizes "<<width<<"   hgt "<<height<<std::endl;
+	for (int i = 0; i < height; i++) {
+		for (int j = 0; j < width; j++) {
+			auto pixel=image.get_pixel(j,i);
+			//uint16_t val = image.get_pixel(j, i);
+			img[0*width*height+i * width + j] = (float)pixel.red;
+			img[1*width*height+i * width + j] = (float)pixel.green;
+			img[2*width*height+i * width + j] = (float)pixel.blue;
+		}
+	}
+}
 /*******************************************************************/
 void readPNGIARPA(torch::Tensor imgT, const char * fname)
 {
@@ -1540,12 +1562,15 @@ void readPNGIARPA(torch::Tensor imgT, const char * fname)
 	png::image<png::gray_pixel_16> image(fname);
 	int width = image.get_width();
 	int height = image.get_height();
+
 	for (int i = 0; i < height; i++) {
 		for (int j = 0; j < width; j++) {
+			//auto pixel=image.get_pixel(j, i);
 			uint16_t val = image.get_pixel(j, i);
 			img[i * width + j] = val == 0 ? 0.0 : ((float)val)/64.0;
 		}
 	}
+	
 }
 /*******************************************************************/
 /*******************************************************************/
