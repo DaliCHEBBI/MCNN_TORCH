@@ -29,7 +29,7 @@ namespace F = torch::nn::functional;
 namespace fs = std::experimental::filesystem;
 
 
-template <typename T>  void Tensor2File(torch::Tensor a, std::string fname)
+template <typename T>  void Tensor2File(torch::Tensor a, std::string fname, std::string Type)
 {
    //Store Tensor 
    T * TensorContent=a.data_ptr<T>();
@@ -37,7 +37,9 @@ template <typename T>  void Tensor2File(torch::Tensor a, std::string fname)
    fwrite(TensorContent, sizeof(T), a.numel(), finaldestination);
    
    //Store dimensions 
-   std::ofstream finaldestinationDim(fname.append(".dim").c_str());
+   std::string dimFname=fname;
+   dimFname.append(".dim");
+   std::ofstream finaldestinationDim(dimFname.c_str());
    
    for (int dd=0;dd<a.dim();dd++)
    {
@@ -47,15 +49,7 @@ template <typename T>  void Tensor2File(torch::Tensor a, std::string fname)
    
    //Store data type 
    std::ofstream datatypetensor(fname.append(".type").c_str());
-   
-   if (std::is_floating_point<T>::value)
-   {
-      datatypetensor<<"float32"<<std::endl;
-   }
-   else
-   {
-      datatypetensor<<"int32"<<std::endl;
-   }
+   datatypetensor<<Type<<std::endl;
    datatypetensor.close();
 }
 
@@ -64,29 +58,31 @@ int main(int argc, char **argv) {
 	// Call Elise Librairy We will be using because classes that handle 
 	// These transformations are already computed 
 
-	/*std::string Datapath,Dataset;
+	std::string Datapath,Dataset;
 	std::string NTraining,NTesting;
-	std::string Option;*/
+	std::string Option;
+	std::string NbChannels;
 		
 	/***********************************************************************
 	 Initilialize ElInitArgMain which as i understood captures arguments entered 
 	 by the operator 
 	/**********************************************************************/
-	/*ElInitArgMain
+	ElInitArgMain
 	(
 		argc,argv,
 		LArgMain()  << EAMC (Datapath,"Path to the dataset where triplets of folders are lying",eSAM_IsExistFile),
 		LArgMain()  << EAM (NTraining,"NTraining",true, "Number of training couples of Tiles ")
 					<< EAM (NTesting,"NTesting",true, "Number of Testing couples of Tiles")
 					<< EAM (Dataset,"Dataset",true, "Dataset Name to be used for processing")
+					<< EAM (NbChannels,"NbChannels",true, "Number of channels of the images")
 					<< EAM (Option,"Option",true,"FOR NOW, DON'T DO ANYTHING")
-	);*/
+	);
 	
 	if (MMVisualMode) return EXIT_SUCCESS;
-	std::string Datapath(argv[1]);
+	/*std::string Datapath(argv[1]);
     std::string NTraining(argv[2]);
     std::string NTesting(argv[3]);
-    std::string Dataset(argv[3]);
+    std::string Dataset(argv[3]);*/
     std::string DirDataset=DirOfFile(Datapath);
     if (!EAMIsInit(&Datapath))
     {
@@ -95,6 +91,7 @@ int main(int argc, char **argv) {
     std::cout<<"Ntrainig "<<NTraining<<std::endl;
     int Ntr=std::stoi(NTraining);
     int Nte=std::stoi(NTesting);
+    int NbChan=std::stoi(NbChannels);
     
     //std::cout<<"Ntraining "<<Ntr<<"  Testing "<<Nte<<"  Datapath "<<Datapath<<std::endl;
     /*******************************************************************/
@@ -104,11 +101,10 @@ int main(int argc, char **argv) {
     
     int height=1024;
     int width=1024;
-    int nbChannels=3;
     
     //Initialize tensors X0 and X1
-    torch::Tensor X0=torch::zeros({Ntr+Nte,nbChannels,height,width},torch::TensorOptions().dtype(torch::kFloat32));
-    torch::Tensor X1=torch::zeros({Ntr+Nte,nbChannels,height,width},torch::TensorOptions().dtype(torch::kFloat32));
+    torch::Tensor X0=torch::zeros({Ntr+Nte,NbChan,height,width},torch::TensorOptions().dtype(torch::kFloat32));
+    torch::Tensor X1=torch::zeros({Ntr+Nte,NbChan,height,width},torch::TensorOptions().dtype(torch::kFloat32));
     torch::Tensor dispnoc=torch::zeros({Ntr+Nte,1,height,width},torch::TensorOptions().dtype(torch::kFloat32));
     torch::Tensor metadata=torch::zeros({Ntr+Nte,3},torch::TensorOptions().dtype(torch::kInt32));
     
@@ -122,7 +118,7 @@ int main(int argc, char **argv) {
     for (const auto& entry : fs::directory_iterator(pathToShow))
        {
           const auto filenameStr = entry.path().filename().string();
-          std::cout<<" File name STr "<<filenameStr<<std::endl;
+          //std::cout<<" File name STr "<<filenameStr<<std::endl;
           if (is_directory(status(entry.path())))
            {  
               // under this directory there should be colored_0 colored_1 and disp_occ directories 
@@ -161,7 +157,7 @@ int main(int argc, char **argv) {
     
     //CREATE DATASET 
     int AlldataNb=0;
-    for (int cc =0;cc<Examples.size();cc)
+    for (int cc =0;cc<Examples.size();cc++)
     {
        //IMAGE NAMES 
        std::string Image0FullPath=Datapath+"/"+std::get<0>(Examples.at(cc))+"/"+image0+"/"+std::get<0>(Examples.at(cc))+"_"+std::get<1>(Examples.at(cc))+".png";
@@ -180,14 +176,14 @@ int main(int argc, char **argv) {
        //sizes 
        int img_height=1024;
        int img_width=1024;
-       int NbChannels=3;
        //narrow image if needed
-       torch::Tensor img0InTensor =torch::empty({1,NbChannels,img_height,img_width},torch::TensorOptions().dtype(torch::kFloat32));       
-       torch::Tensor img1InTensor =torch::empty({1,NbChannels,1,img_height,img_width},torch::TensorOptions().dtype(torch::kFloat32));       
+       torch::Tensor img0InTensor =torch::empty({1,NbChan,img_height,img_width},torch::TensorOptions().dtype(torch::kFloat32));       
+       torch::Tensor img1InTensor =torch::empty({1,NbChan,1,img_height,img_width},torch::TensorOptions().dtype(torch::kFloat32));       
        torch::Tensor DispInTensor =torch::empty({1,1,img_height,img_width},torch::TensorOptions().dtype(torch::kFloat32));  
+       std::cout<<"Reading images "<<std::endl;
+       readRGBPNG(img0InTensor,Image0FullPath.c_str(),NbChan);
+       readRGBPNG(img1InTensor,Image1FullPath.c_str(),NbChan);
        
-       readRGBPNG(img0InTensor,Image0FullPath.c_str());
-       readRGBPNG(img1InTensor,Image1FullPath.c_str());
        //Copy image content in tensors 
        
        /*
@@ -220,21 +216,16 @@ int main(int argc, char **argv) {
        //Normalize images 
        img0InTensor=img0InTensor.add(img0InTensor.mean().mul(-1.0)).div(img0InTensor.std());
        img1InTensor=img1InTensor.add(img1InTensor.mean().mul(-1.0)).div(img1InTensor.std());
-       
-       std::cout<<"immmmf  "<<img0InTensor.index({0}).sizes()<<std::endl;	
-       // Push Tensor images in relevant X0 and X1 Container Tensors 
-       //X0.slice(0,cc,cc+1,1)=img0InTensor;
-       //X1.slice(0,cc,cc+1,1)=img1InTensor;
        using namespace torch::indexing;
-       X0.index_put_({Slice(cc,cc+1,1),Slice(0,1,1),Slice(0,None,1),Slice(0,None,1)},img0InTensor.slice(1,0,1,1));
-       X0.index_put_({Slice(cc,cc+1,1),Slice(1,2,1),Slice(0,None,1),Slice(0,None,1)},img0InTensor.slice(1,1,2,1));
-       X0.index_put_({Slice(cc,cc+1,1),Slice(2,3,1),Slice(0,None,1),Slice(0,None,1)},img0InTensor.slice(1,2,3,1));
-       X1.index_put_({Slice(cc,cc+1,1),Slice(0,1,1),Slice(0,None,1),Slice(0,None,1)},img1InTensor.slice(1,0,1,1));
-       X1.index_put_({Slice(cc,cc+1,1),Slice(1,2,1),Slice(0,None,1),Slice(0,None,1)},img1InTensor.slice(1,1,2,1));
-       X1.index_put_({Slice(cc,cc+1,1),Slice(2,3,1),Slice(0,None,1),Slice(0,None,1)},img1InTensor.slice(1,2,3,1));
-       //X1.index_put_({cc},img1InTensor.index({0}));
-       
-       std::cout<<"CHECK LEVEL "<<std::endl;
+       for (int i=0; i<NbChan ; i++)
+       {
+       X0.index_put_({Slice(cc,cc+1,1),Slice(i,i+1,1),Slice(0,None,1),Slice(0,None,1)},img0InTensor.slice(1,i,i+1,1));
+       //X0.index_put_({Slice(cc,cc+1,1),Slice(1,2,1),Slice(0,None,1),Slice(0,None,1)},img0InTensor.slice(1,1,2,1));
+       //X0.index_put_({Slice(cc,cc+1,1),Slice(2,3,1),Slice(0,None,1),Slice(0,None,1)},img0InTensor.slice(1,2,3,1));
+       X1.index_put_({Slice(cc,cc+1,1),Slice(i,i+1,1),Slice(0,None,1),Slice(0,None,1)},img1InTensor.slice(1,i,i+1,1));
+       //X1.index_put_({Slice(cc,cc+1,1),Slice(1,2,1),Slice(0,None,1),Slice(0,None,1)},img1InTensor.slice(1,1,2,1));
+       //X1.index_put_({Slice(cc,cc+1,1),Slice(2,3,1),Slice(0,None,1),Slice(0,None,1)},img1InTensor.slice(1,2,3,1));
+       }
        // Read disparity image 
        if (strcmp(Dataset.c_str(),"Vahingen")==0)
        {
@@ -277,15 +268,17 @@ int main(int argc, char **argv) {
        bool is_te = false;
        for (int j=0;j<te.numel();j++)   //.accessor<int32_t,1>()[0]
        {
-         if (cc==te.accessor<int,1>()[j])
-         {is_te=true;}
+         if (cc==te.accessor<long,1>()[j])
+         {   std::cout<<"is test "<<cc<<std::endl;
+			 is_te=true;}
        }
        
        bool is_tr = false;
        for (int j=0;j<tr.numel();j++)
        {
-         if (cc==tr.accessor<int,1>()[j])
-         {is_tr=true;}
+         if (cc==tr.accessor<long,1>()[j])
+         {std::cout<<"is training "<<cc<<std::endl;
+			 is_tr=true;}
        }
        
        if (is_te)
@@ -311,26 +304,30 @@ int main(int argc, char **argv) {
     #endif
 
     
+    std::cout<<"STORING DATASETS "<<std::endl;
     // Store tensors in bin files by data type
     std::string X0Name=Datapath+"/x0.bin";
-    Tensor2File<float>(X0,X0Name);
+    Tensor2File<float>(X0,X0Name,"float32");
     std::string X1Name=Datapath+"/x1.bin";
-    Tensor2File<float>(X1,X1Name);
+    Tensor2File<float>(X1,X1Name,"float32");
     std::string dispnocc=Datapath+"/dispnoc.bin";
-    Tensor2File<float>(dispnoc,dispnocc);
+    Tensor2File<float>(dispnoc,dispnocc,"float32");
+    std::cout<<"storing metadata "<<std::endl;
     std::string metadataa=Datapath+"/metadata.bin";
-    Tensor2File<int32_t>(metadata,metadataa);
+    Tensor2File<int32_t>(metadata,metadataa,"int32");
+    std::cout<<"stored metadata "<<std::endl;
     std::string trr=Datapath+"/tr.bin";
-    Tensor2File<int32_t>(tr,trr);
+    Tensor2File<int64_t>(tr,trr,"int64");
+    std::cout<<"stored tr  "<<std::endl;
     
     std::string tee=Datapath+"/te.bin";
-    Tensor2File<int32_t>(te,tee);
+    Tensor2File<int64_t>(te,tee,"int64");
     
     std::string nnztr=Datapath+"/nnz_tr.bin";
-    Tensor2File<float>(nnz_tr,nnztr);
+    Tensor2File<float>(nnz_tr,nnztr,"float32");
     
     std::string nnzte=Datapath+"/nnz_te.bin";
-    Tensor2File<float>(nnz_te,nnzte);
+    Tensor2File<float>(nnz_te,nnzte,"float32");
 
     return EXIT_SUCCESS;
 }

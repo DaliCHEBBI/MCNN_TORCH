@@ -312,7 +312,7 @@ public:
 		void  test  (StereoDataset Dataset,ConvNet_Fast Network,size_t data_size, torch::Device device, Options opt);
 		torch::Tensor predict(torch::Tensor X_batch, ConvNet_Fast Network,int disp_max,torch::Device device, 
                               Options opt);
-        void Save_Network(ConvNet_Fast Network, std::string fileName);
+        void Save_Network(ConvNet_Fast Network, std::string fileName, Options opt);
         torch::Tensor gaussian(float blur_sigma);
         int GetWindowSize(ConvNet_Fast &Network);
         void Load_Network(ConvNet_Fast Network, std::string filename);
@@ -374,10 +374,27 @@ torch::Tensor SimilarityLearner::gaussian(float sigma)
    return K;
 }
 /***********************************************************************/
-void SimilarityLearner::Save_Network(ConvNet_Fast Network, std::string filename)
+void SimilarityLearner::Save_Network(ConvNet_Fast Network, std::string filename,Options opt)
 {
 	auto Fast=Network->getFastSequential();
-	torch::save(Fast, filename.c_str());
+	int countFiles=0;
+	for (int i=0;i<Fast->size();i++)
+    { 
+		if (i%2==0 && countFiles<opt.ll1)
+		{ 
+			int numwght =Fast->named_children()[i].value().get()->as<torch::nn::Conv2dImpl>()->weight.data().numel();
+			int numwbias=Fast->named_children()[i].value().get()->as<torch::nn::Conv2dImpl>()->bias.data().numel();
+			float* weight=Fast->named_children()[i].value().get()->as<torch::nn::Conv2dImpl>()->weight.data().data_ptr<float>();
+			float * bias =Fast->named_children()[i].value().get()->as<torch::nn::Conv2dImpl>()->bias.data().data_ptr<float>();
+			std::string FileWght=filename+"/"+"Weights_"+std::to_string(i+1)+"_cudnn.SpatialConvolution.bin";
+			std::string FileBias=filename+"/"+"Biases_"+std::to_string(i+1)+"_cudnn.SpatialConvolution.bin";
+			FILE *Wght = fopen(FileWght.c_str(), "wb");
+			FILE *Bias = fopen(FileBias.c_str(), "wb");
+			fwrite(weight, sizeof(float), numwght, Wght);
+			fwrite(bias, sizeof(float), numwbias, Bias);
+			countFiles++;
+	    }
+	}
 }
 /***********************************************************************/
 void SimilarityLearner::Load_Network(ConvNet_Fast Network, std::string filename)
@@ -954,121 +971,136 @@ int main(int argc, char **argv) {
   /********************************************************************/ 
   //device=torch::kCUDA ;
   printArgs(opt);
-  
-  ConvNet_Fast Network(3,opt.ll1);
-  Network->createModel(opt.fm,opt.ll1,opt.n_input_plane,3);
-  
   SimilarityLearner SimilarityLearn;
-  int Ws=SimilarityLearn.GetWindowSize(Network);
-  std::cout<<"=========> Loading the stored stereo dataset "<<std::endl;
-  //Train Dataset 
-  auto IARPADatasetTr = StereoDataset(
-             X0_left_Dataset,X1_right_Dataset,dispnoc_Data,metadata_File,tr_File,te_File,nnztr_File,nnzte_File,
-             opt.n_input_plane, Ws,opt.trans, opt.hscale, opt.scale, opt.hflip,opt.vflip,opt.brightness,opt.true1,opt.false1,opt.false2,opt.Rotate, 
-             opt.contrast,opt.d_hscale, opt.d_hshear, opt.d_vtrans, opt.d_brightness, opt.d_contrast,opt.d_rotate); 
-
-  std::cout<<" Dataset Training has been successfully read and processed  "<<std::endl;
-
-/**********************************************************************/
-// Training On the IARPA DATASET 
-   // Hyper parameters
-  const size_t num_epochs = 5;
-  const double learning_rate = 0.001;
-  // Data loader  ==> Training dataset  
-  auto train_loader = torch::data::make_data_loader<torch::data::samplers::RandomSampler>(
-      std::move(IARPADatasetTr), opt.bs/2);
-  
-  int num_train_samples=IARPADatasetTr.size().value();
-  std::cout<<"dataset size "<<std::endl;
-  
-
-  /*++++++++++torch::optim::SGD optimizer(
-      Network->parameters(), torch::optim::SGDOptions(0.001).momentum(0.5)); */
-  
- /*Network->to(device);
- for (int epoch=0;epoch<num_epochs;epoch++)
- {
-    SimilarityLearn.train(Network, train_loader,optimizer, epoch,num_train_samples,opt.bs, 20,device); // 20 means a display of results in a periodic fashion
- }*/
- 
- std::string fileName=std::string(argv[5])+std::string("/net_")+std::string(argv[1])+std::string("_")+std::string(argv[2])+std::string("_")+std::to_string(num_epochs)+std::string(".pt");
- //SimilarityLearn.Save_Network(Network,fileName);
- //torch::save(Network,fileName);
-/**********************************************************************/
- // Testing on an Unseen chunk of the IARPA DATASET 
- 
- //std::string outputfileName=std::string(argv[5])+std::string("/net_")+std::string(argv[1])+std::string("_")+std::string(argv[2])+std::string("_")+std::to_string(num_epochs)+std::string(".pt");
- 
- ConvNet_Fast TestNetwork(3,opt.ll1);
- 
- /**********************************************************************/
- 
- /********* *HOW TO READ PICKLED MODEL ==> FIND A SOLUTION *************/
- 
- /**********************************************************************/
- 
- // Need to copy the learnt model to the test model and do testing 
- //auto copy =Network->clone();
- 
- //TestNetwork= std::dynamic_pointer_cast<ConvNet_Fast>(copy);
- //TestNetwork= Network->clone();
- TestNetwork->createModel(opt.fm,opt.ll1,opt.n_input_plane,3);
- /**********************************************************************/
- 
- /***CODE SNIPPET TO LOAD WEIGHTS AND BIAS STORED IN BINARY Files ******/
- std::vector<std::pair<std::string,std::string>> Container;
- 
- auto p1 = std::make_pair("/home/mohamedali/Documents/BH_STUDY/WB_No_BH_Ep_50/Weights_1_cudnn.SpatialConvolution.bin","/home/mohamedali/Documents/BH_STUDY/WB_No_BH_Ep_50/Biases_1_cudnn.SpatialConvolution.bin");
- Container.push_back(p1);
- auto p2 = std::make_pair("/home/mohamedali/Documents/BH_STUDY/WB_No_BH_Ep_50/Weights_3_cudnn.SpatialConvolution.bin","/home/mohamedali/Documents/BH_STUDY/WB_No_BH_Ep_50/Biases_3_cudnn.SpatialConvolution.bin");
- Container.push_back(p2);
- auto p3 = std::make_pair("/home/mohamedali/Documents/BH_STUDY/WB_No_BH_Ep_50/Weights_5_cudnn.SpatialConvolution.bin","/home/mohamedali/Documents/BH_STUDY/WB_No_BH_Ep_50/Biases_5_cudnn.SpatialConvolution.bin");
- Container.push_back(p3);
- auto p4 = std::make_pair("/home/mohamedali/Documents/BH_STUDY/WB_No_BH_Ep_50/Weights_7_cudnn.SpatialConvolution.bin","/home/mohamedali/Documents/BH_STUDY/WB_No_BH_Ep_50/Biases_7_cudnn.SpatialConvolution.bin");
- Container.push_back(p4);
- SimilarityLearn.PopulateModelFromBinary(TestNetwork,Container);
- /**********************************************************************/ 
- 
- //****++++++auto FastNetworkTrained=TestNetwork->getFastSequential();
-  //auto model =torch::load(FastNetworkTrained,"net_vahingen_fast_-a_train_tr_14.t7");
-
- //std::cout<<" Trained network >>>>> "<<FastNetworkTrained<<std::endl;
- //SimilarityLearn.Load_Network(TestNetwork,outputfileName);
-  
-  //torch::load(TestNetwork,outputfileName);  net_vahingen_fast_-a_train_tr_14
- 
- 
- // Need to change padding to value 1 so output image will keep the same size as the input 
- auto Fast=TestNetwork->getFastSequential(); 
- size_t Sz=Fast->size();
- size_t cc=0;
- for (cc=0;cc<Sz;cc++)
+  if (strcmp(argv[3],"Train")==0)
   {
-	std::cout<<"Name of layer "<<Fast->named_children()[cc].key()<<std::endl;
-	std::string LayerName=Fast->named_children()[cc].key();
-    if (LayerName.rfind(std::string("conv"),0)==0)
-        
-        {   //torch::nn::Conv2dImpl *mod=Fast->named_children()[cc].value().get()->as<torch::nn::Conv2dImpl>();
-			std::cout<<"condition verified on name of convolution "<<std::endl;
-        	Fast->named_children()[cc].value().get()->as<torch::nn::Conv2dImpl>()->options.padding()=1;
-        }
+     ConvNet_Fast Network(3,opt.ll1);
+     Network->createModel(opt.fm,opt.ll1,opt.n_input_plane,3);
+     
+     
+     int Ws=SimilarityLearn.GetWindowSize(Network);
+     std::cout<<"=========> Loading the stored stereo dataset "<<std::endl;
+     //Train Dataset 
+     auto IARPADatasetTr = StereoDataset(
+                X0_left_Dataset,X1_right_Dataset,dispnoc_Data,metadata_File,tr_File,te_File,nnztr_File,nnzte_File,
+                opt.n_input_plane, Ws,opt.trans, opt.hscale, opt.scale, opt.hflip,opt.vflip,opt.brightness,opt.true1,opt.false1,opt.false2,opt.Rotate, 
+                opt.contrast,opt.d_hscale, opt.d_hshear, opt.d_vtrans, opt.d_brightness, opt.d_contrast,opt.d_rotate); 
+     
+     std::cout<<" Dataset Training has been successfully read and processed  "<<std::endl;
+     
+     /**********************************************************************/
+     // Training On the IARPA DATASET 
+        // Hyper parameters
+       const size_t num_epochs =50;
+       const double learning_rate = 0.001;
+       const double learning_rate_decay=10.0;
+       // Data loader  ==> Training dataset  
+       auto train_loader = torch::data::make_data_loader<torch::data::samplers::RandomSampler>(
+           std::move(IARPADatasetTr), opt.bs/2);
+       
+       int num_train_samples=IARPADatasetTr.size().value();
+       std::cout<<"dataset size "<<num_train_samples<<std::endl;
+       
+     
+       torch::optim::SGD optimizer(
+           Network->parameters(), torch::optim::SGDOptions(learning_rate).momentum(0.5)); 
+       
+      Network->to(device);
+      for (int epoch=0;epoch<num_epochs;epoch++)
+      {
+         SimilarityLearn.train(Network, train_loader,optimizer, epoch,num_train_samples,opt.bs, 20,device); // 20 means a display of results in a periodic fashion
+      }
+      
+      std::string fileName="./SavedNetwork";
+      SimilarityLearn.Save_Network(Network,fileName,opt);
+      //torch::save(Network,fileName); 
+      
+      /*******************SAVING WEIGHTS AND BIASES AFTER TRAINING ************/
   }
- // Now Testing routine on test dataset : No need for a dataloader because we ll be using the whole pair of left and right tile 
-
-/*********************LOADING TEST DATASET*****************************/
-  // Test Dataset 
- auto IARPADatasetTe = StereoDataset(
-             X0_left_Dataset,X1_right_Dataset,dispnoc_Data,metadata_File,tr_File,te_File,nnztr_File,nnzte_File, 
-             opt.n_input_plane, Ws,opt.trans, opt.hscale, opt.scale, opt.hflip,opt.vflip,opt.brightness,opt.true1,opt.false1,opt.false2,opt.Rotate, 
-             opt.contrast,opt.d_hscale, opt.d_hshear, opt.d_vtrans, opt.d_brightness, opt.d_contrast,opt.d_rotate);
- 
-  int num_test_samples=IARPADatasetTe.size().value();
-  std::cout<<" Test dataset size "<<std::endl;
+  else if (strcmp(argv[3],"Test")==0)
+  {
+     /**********************************************************************/
+      // Testing on an Unseen chunk of the IARPA DATASET 
+      
+      //std::string outputfileName=std::string(argv[5])+std::string("/net_")+std::string(argv[1])+std::string("_")+std::string(argv[2])+std::string("_")+std::to_string(num_epochs)+std::string(".pt");
+      
+      ConvNet_Fast TestNetwork(3,opt.ll1);
+      
+      /**********************************************************************/
+      
+      /********* *HOW TO READ PICKLED MODEL ==> FIND A SOLUTION *************/
+      
+      /**********************************************************************/
+      
+      // Need to copy the learnt model to the test model and do testing 
+      //auto copy =Network->clone();
+      
+      //TestNetwork= std::dynamic_pointer_cast<ConvNet_Fast>(copy);
+      //TestNetwork= Network->clone();
+      TestNetwork->createModel(opt.fm,opt.ll1,opt.n_input_plane,3);
+      int Ws=SimilarityLearn.GetWindowSize(TestNetwork);
+      /**********************************************************************/
+      
+      /***CODE SNIPPET TO LOAD WEIGHTS AND BIAS STORED IN BINARY Files ******/
+      std::vector<std::pair<std::string,std::string>> Container;
+      
+      auto p1 = std::make_pair("/home/mohamedali/Documents/BH_STUDY/WB_No_BH_Ep_50/Weights_1_cudnn.SpatialConvolution.bin","/home/mohamedali/Documents/BH_STUDY/WB_No_BH_Ep_50/Biases_1_cudnn.SpatialConvolution.bin");
+      Container.push_back(p1);
+      auto p2 = std::make_pair("/home/mohamedali/Documents/BH_STUDY/WB_No_BH_Ep_50/Weights_3_cudnn.SpatialConvolution.bin","/home/mohamedali/Documents/BH_STUDY/WB_No_BH_Ep_50/Biases_3_cudnn.SpatialConvolution.bin");
+      Container.push_back(p2);
+      auto p3 = std::make_pair("/home/mohamedali/Documents/BH_STUDY/WB_No_BH_Ep_50/Weights_5_cudnn.SpatialConvolution.bin","/home/mohamedali/Documents/BH_STUDY/WB_No_BH_Ep_50/Biases_5_cudnn.SpatialConvolution.bin");
+      Container.push_back(p3);
+      auto p4 = std::make_pair("/home/mohamedali/Documents/BH_STUDY/WB_No_BH_Ep_50/Weights_7_cudnn.SpatialConvolution.bin","/home/mohamedali/Documents/BH_STUDY/WB_No_BH_Ep_50/Biases_7_cudnn.SpatialConvolution.bin");
+      Container.push_back(p4);
+      SimilarityLearn.PopulateModelFromBinary(TestNetwork,Container);
+      /**********************************************************************/ 
+      
+      //****++++++auto FastNetworkTrained=TestNetwork->getFastSequential();
+       //auto model =torch::load(FastNetworkTrained,"net_vahingen_fast_-a_train_tr_14.t7");
+     
+      //std::cout<<" Trained network >>>>> "<<FastNetworkTrained<<std::endl;
+      //SimilarityLearn.Load_Network(TestNetwork,outputfileName);
+       
+       //torch::load(TestNetwork,outputfileName);  net_vahingen_fast_-a_train_tr_14
+      
+      
+      // Need to change padding to value 1 so output image will keep the same size as the input 
+      auto Fast=TestNetwork->getFastSequential(); 
+      size_t Sz=Fast->size();
+      size_t cc=0;
+      for (cc=0;cc<Sz;cc++)
+       {
+     	std::cout<<"Name of layer "<<Fast->named_children()[cc].key()<<std::endl;
+     	std::string LayerName=Fast->named_children()[cc].key();
+         if (LayerName.rfind(std::string("conv"),0)==0)
+             
+             {   //torch::nn::Conv2dImpl *mod=Fast->named_children()[cc].value().get()->as<torch::nn::Conv2dImpl>();
+     			std::cout<<"condition verified on name of convolution "<<std::endl;
+             	Fast->named_children()[cc].value().get()->as<torch::nn::Conv2dImpl>()->options.padding()=1;
+             }
+       }
+      // Now Testing routine on test dataset : No need for a dataloader because we ll be using the whole pair of left and right tile 
+     
+     /*********************LOADING TEST DATASET*****************************/
+       // Test Dataset 
+      auto IARPADatasetTe = StereoDataset(
+                  X0_left_Dataset,X1_right_Dataset,dispnoc_Data,metadata_File,tr_File,te_File,nnztr_File,nnzte_File, 
+                  opt.n_input_plane, Ws,opt.trans, opt.hscale, opt.scale, opt.hflip,opt.vflip,opt.brightness,opt.true1,opt.false1,opt.false2,opt.Rotate, 
+                  opt.contrast,opt.d_hscale, opt.d_hshear, opt.d_vtrans, opt.d_brightness, opt.d_contrast,opt.d_rotate);
+      
+       int num_test_samples=IARPADatasetTe.size().value();
+       std::cout<<" Test dataset size "<<std::endl;
+       
+      std::cout<<" Dataset Testing has been successfully read and processed  "<<std::endl;
+      SimilarityLearn.test(IARPADatasetTe,TestNetwork,num_test_samples, device,opt);
+  }
+  else
+   {
+	  std::cout<<"no other option "<<std::endl; 
+   }
   
- std::cout<<" Dataset Testing has been successfully read and processed  "<<std::endl;
- SimilarityLearn.test(IARPADatasetTe,TestNetwork,num_test_samples, device,opt);
- 
- 
+
+
  
  /***********************DEBUGGAGE *************************************
  //torch::Tensor a = torch::empty({2, 192, 1024, 1024},torch::TensorOptions().dtype(torch::kFloat32).device(device));

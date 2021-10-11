@@ -36,7 +36,7 @@ __global__ void StereoL2R_(float *vol_L, float *vol_R, int size2, int size3, int
 __global__ void bilateral_filter(float *img, float *out, int size, int dim2, int dim3, int kernel_radius, float sigma1, float sigma2);
 __global__ void median2d(float *img, float *out, int size, int dim2, int dim3, int kernel_radius);
 void readPNG16(torch::Tensor imgT, const char * fname);   // See later how to make it a Float Tensor 
-void readRGBPNG(torch::Tensor imgT, const char * fname) ;
+void readRGBPNG(torch::Tensor imgT, const char * fname, int NbChannels) ;
 void readPNGIARPA(torch::Tensor imgT, const char * fname);
 void writePNG16(torch::Tensor imgT, int height, int width, const char * fname);
 void writePFM(torch::Tensor imgT, const char * fname);
